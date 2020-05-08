@@ -1,5 +1,6 @@
 # -*- mode: ruby; coding: us-ascii -*-
 firstline, predefined = __LINE__+1, %[\
+  $LAST_ALLOCATION
   max
   min
   freeze

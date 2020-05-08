@@ -27,6 +27,7 @@ struct rb_global_entry {
 };
 
 /* variable.c */
+bool is_global_tbl_initialized(void);
 void rb_gc_mark_global_tbl(void);
 void rb_gc_update_global_tbl(void);
 size_t rb_generic_ivar_memsize(VALUE);

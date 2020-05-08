@@ -380,7 +380,7 @@ int ruby_rgengc_debug;
  * 5: show all references
  */
 #ifndef RGENGC_CHECK_MODE
-#define RGENGC_CHECK_MODE  0
+#define RGENGC_CHECK_MODE  5
 #endif
 
 // Note: using RUBY_ASSERT_WHEN() extend a macro in expr (info by nobu).
@@ -2188,6 +2188,32 @@ newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VAL
     return newobj_slowpath(klass, flags, v1, v2, v3, objspace, FALSE);
 }
 
+static VALUE
+newobj_maybe_init_neighbor(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected, rb_objspace_t *objspace, VALUE obj)
+{
+    RVALUE *neighbor = heap_eden->freelist;
+
+    if (neighbor != NULL && neighbor == ((RVALUE *) obj) - 1 && is_global_tbl_initialized()) {
+        asan_unpoison_object((VALUE)neighbor, true);
+        heap_get_freeobj_head(objspace, heap_eden); /* pop neighbor */
+
+        newobj_init(rb_cFloat, T_FLOAT, 0, 0, 0, RGENGC_WB_PROTECTED_FLOAT, objspace, (VALUE)neighbor);
+
+        struct RFloat *flt = (struct RFloat *)neighbor;
+        flt->float_value = 42;
+        OBJ_FREEZE((VALUE)flt);
+
+        GC_ASSERT((VALUE)flt == (VALUE)neighbor);
+
+        struct rb_global_entry *entry = rb_global_entry(id_G_LAST_ALLOCATION);
+        rb_gvar_set(entry, (VALUE)neighbor);
+    } else {
+        // printf("MISS\n");
+    }
+
+    return (VALUE)neighbor;
+}
+
 static inline VALUE
 newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected)
 {
@@ -2209,15 +2235,19 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protect
 	  ruby_gc_stressful ||
 	  gc_event_hook_available_p(objspace)) &&
 	(obj = heap_get_freeobj_head(objspace, heap_eden)) != Qfalse) {
-	return newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
+	newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
     }
     else {
         RB_DEBUG_COUNTER_INC(obj_newobj_slowpath);
 
-	return wb_protected ?
+	obj = wb_protected ?
 	  newobj_slowpath_wb_protected(klass, flags, v1, v2, v3, objspace) :
 	  newobj_slowpath_wb_unprotected(klass, flags, v1, v2, v3, objspace);
     }
+
+    newobj_maybe_init_neighbor(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
+
+    return obj;
 }
 
 VALUE

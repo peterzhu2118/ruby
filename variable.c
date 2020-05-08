@@ -68,6 +68,12 @@ Init_var_tables(void)
     tmp_classpath = rb_intern_const("__tmp_classpath__");
 }
 
+bool
+is_global_tbl_initialized(void)
+{
+    return rb_global_tbl != NULL;
+}
+
 static inline bool
 rb_namespace_p(VALUE obj)
 {
