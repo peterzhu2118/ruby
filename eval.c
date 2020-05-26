@@ -83,6 +83,7 @@ ruby_setup(void)
 #endif
     Init_BareVM();
     Init_heap();
+    rb_gc_disable();
     rb_vm_encoded_insn_data_table_init();
     Init_vm_objects();
 
@@ -93,6 +94,8 @@ ruby_setup(void)
 	GET_VM()->running = 1;
     }
     EC_POP_TAG();
+
+    rb_gc_enable();
 
     return state;
 }

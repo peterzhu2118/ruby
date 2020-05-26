@@ -150,12 +150,19 @@ RBIMPL_SYMBOL_EXPORT_END()
 RBIMPL_ATTR_PURE_ON_NDEBUG()
 RBIMPL_ATTR_ARTIFICIAL()
 static inline enum ruby_value_type
+RB_FLAG_BUILTIN_TYPE(VALUE flags)
+{
+    return RBIMPL_CAST((enum ruby_value_type)(flags & RUBY_T_MASK));
+}
+
+RBIMPL_ATTR_PURE_ON_NDEBUG()
+RBIMPL_ATTR_ARTIFICIAL()
+static inline enum ruby_value_type
 RB_BUILTIN_TYPE(VALUE obj)
 {
     RBIMPL_ASSERT_OR_ASSUME(! RB_SPECIAL_CONST_P(obj));
 
-    VALUE ret = RBASIC(obj)->flags & RUBY_T_MASK;
-    return RBIMPL_CAST((enum ruby_value_type)ret);
+    return RB_FLAG_BUILTIN_TYPE(RBASIC(obj)->flags);
 }
 
 RBIMPL_ATTR_PURE_ON_NDEBUG()
