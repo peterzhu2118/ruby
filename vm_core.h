@@ -295,6 +295,7 @@ struct rb_mjit_unit;
 
 struct rb_iseq_constant_body {
     enum iseq_type {
+        ISEQ_TYPE_UNINITIALIZED,
 	ISEQ_TYPE_TOP,
 	ISEQ_TYPE_METHOD,
 	ISEQ_TYPE_BLOCK,
@@ -436,7 +437,7 @@ struct rb_iseq_struct {
     VALUE flags; /* 1 */
     VALUE wrapper; /* 2 */
 
-    struct rb_iseq_constant_body *body;  /* 3 */
+    struct rb_iseq_constant_body body;  /* 3 */
 
     union { /* 4, 5 words */
 	struct iseq_compile_data *compile_data; /* used at compile time */
@@ -707,7 +708,7 @@ struct rb_captured_block {
     VALUE self;
     const VALUE *ep;
     union {
-	const rb_iseq_t *iseq;
+	rb_iseq_t *iseq;
 	const struct vm_ifunc *ifunc;
 	VALUE val;
     } code;

@@ -110,7 +110,7 @@ fastpath_applied_iseq_p(const CALL_INFO ci, const CALL_CACHE cc, const rb_iseq_t
     extern bool rb_simple_iseq_p(const rb_iseq_t *iseq);
     return iseq != NULL
         && !(vm_ci_flag(ci) & VM_CALL_KW_SPLAT) && rb_simple_iseq_p(iseq) // Top of vm_callee_setup_arg. In this case, opt_pc is 0.
-        && vm_ci_argc(ci) == (unsigned int)iseq->body->param.lead_num // exclude argument_arity_error (assumption: `calling->argc == ci->orig_argc` in send insns)
+        && vm_ci_argc(ci) == (unsigned int)iseq->body.param.lead_num // exclude argument_arity_error (assumption: `calling->argc == ci->orig_argc` in send insns)
         && vm_call_iseq_optimizable_p(ci, cc); // CC_SET_FASTPATH condition
 }
 
@@ -313,7 +313,7 @@ extern bool mjit_copy_cache_from_main_thread(const rb_iseq_t *iseq,
 static bool
 mjit_compile_body(FILE *f, const rb_iseq_t *iseq, struct compile_status *status)
 {
-    const struct rb_iseq_constant_body *body = iseq->body;
+    const struct rb_iseq_constant_body *body = &iseq->body;
     status->success = true;
     status->local_stack_p = !body->catch_except_p;
 
@@ -397,21 +397,21 @@ inlinable_iseq_p(const struct rb_iseq_constant_body *body)
 // This needs to be macro instead of a function because it's using `alloca`.
 #define INIT_COMPILE_STATUS(status, body, compile_root_p) do { \
     status = (struct compile_status){ \
-        .stack_size_for_pos = (int *)alloca(sizeof(int) * body->iseq_size), \
+        .stack_size_for_pos = (int *)alloca(sizeof(int) * body.iseq_size), \
         .inlined_iseqs = compile_root_p ? \
-            alloca(sizeof(const struct rb_iseq_constant_body *) * body->iseq_size) : NULL, \
-        .is_entries = (body->is_size > 0) ? \
-            alloca(sizeof(union iseq_inline_storage_entry) * body->is_size) : NULL, \
-        .cc_entries_index = (body->ci_size > 0) ? \
-            mjit_capture_cc_entries(status.compiled_iseq, body) : -1, \
+            alloca(sizeof(const struct rb_iseq_constant_body *) * body.iseq_size) : NULL, \
+        .is_entries = (body.is_size > 0) ? \
+            alloca(sizeof(union iseq_inline_storage_entry) * body.is_size) : NULL, \
+        .cc_entries_index = (body.ci_size > 0) ? \
+            mjit_capture_cc_entries(status.compiled_iseq, &body) : -1, \
         .compiled_id = status.compiled_id, \
         .compiled_iseq = status.compiled_iseq, \
         .compile_info = compile_root_p ? \
-            rb_mjit_iseq_compile_info(body) : alloca(sizeof(struct rb_mjit_compile_info)) \
+            rb_mjit_iseq_compile_info(&body) : alloca(sizeof(struct rb_mjit_compile_info)) \
     }; \
-    memset(status.stack_size_for_pos, NOT_COMPILED_STACK_SIZE, sizeof(int) * body->iseq_size); \
+    memset(status.stack_size_for_pos, NOT_COMPILED_STACK_SIZE, sizeof(int) * body.iseq_size); \
     if (compile_root_p) \
-        memset((void *)status.inlined_iseqs, 0, sizeof(const struct rb_iseq_constant_body *) * body->iseq_size); \
+        memset((void *)status.inlined_iseqs, 0, sizeof(const struct rb_iseq_constant_body *) * body.iseq_size); \
     else \
         memset(status.compile_info, 0, sizeof(struct rb_mjit_compile_info)); \
 } while (0)
@@ -420,7 +420,7 @@ inlinable_iseq_p(const struct rb_iseq_constant_body *body)
 static bool
 precompile_inlinable_iseqs(FILE *f, const rb_iseq_t *iseq, struct compile_status *status)
 {
-    const struct rb_iseq_constant_body *body = iseq->body;
+    const struct rb_iseq_constant_body *body = &iseq->body;
     unsigned int pos = 0;
     while (pos < body->iseq_size) {
 #if OPT_DIRECT_THREADED_CODE || OPT_CALL_THREADED_CODE
@@ -439,25 +439,25 @@ precompile_inlinable_iseqs(FILE *f, const rb_iseq_t *iseq, struct compile_status
                 vm_cc_cme(cc)->def->type == VM_METHOD_TYPE_ISEQ &&
                 fastpath_applied_iseq_p(ci, cc, child_iseq = def_iseq_ptr(vm_cc_cme(cc)->def)) &&
                 // CC_SET_FASTPATH in vm_callee_setup_arg
-                inlinable_iseq_p(child_iseq->body)) {
-                status->inlined_iseqs[pos] = child_iseq->body;
+                inlinable_iseq_p(&child_iseq->body)) {
+                status->inlined_iseqs[pos] = &child_iseq->body;
 
                 if (mjit_opts.verbose >= 1) // print beforehand because ISeq may be GCed during copy job.
                     fprintf(stderr, "JIT inline: %s@%s:%d => %s@%s:%d\n",
-                            RSTRING_PTR(iseq->body->location.label),
-                            RSTRING_PTR(rb_iseq_path(iseq)), FIX2INT(iseq->body->location.first_lineno),
-                            RSTRING_PTR(child_iseq->body->location.label),
-                            RSTRING_PTR(rb_iseq_path(child_iseq)), FIX2INT(child_iseq->body->location.first_lineno));
+                            RSTRING_PTR(iseq->body.location.label),
+                            RSTRING_PTR(rb_iseq_path(iseq)), FIX2INT(iseq->body.location.first_lineno),
+                            RSTRING_PTR(child_iseq->body.location.label),
+                            RSTRING_PTR(rb_iseq_path(child_iseq)), FIX2INT(child_iseq->body.location.first_lineno));
 
                 struct compile_status child_status = { .compiled_iseq = status->compiled_iseq, .compiled_id = status->compiled_id };
                 INIT_COMPILE_STATUS(child_status, child_iseq->body, false);
                 child_status.inline_context = (struct inlined_call_context){
                     .orig_argc = vm_ci_argc(ci),
                     .me = (VALUE)vm_cc_cme(cc),
-                    .param_size = child_iseq->body->param.size,
-                    .local_size = child_iseq->body->local_table_size
+                    .param_size = child_iseq->body.param.size,
+                    .local_size = child_iseq->body.local_table_size
                 };
-                if ((child_iseq->body->ci_size > 0 && child_status.cc_entries_index == -1)
+                if ((child_iseq->body.ci_size > 0 && child_status.cc_entries_index == -1)
                     || (child_status.is_entries != NULL && !mjit_copy_cache_from_main_thread(child_iseq, child_status.is_entries))) {
                     return false;
                 }
@@ -482,9 +482,15 @@ precompile_inlinable_iseqs(FILE *f, const rb_iseq_t *iseq, struct compile_status
 bool
 mjit_compile(FILE *f, const rb_iseq_t *iseq, const char *funcname, int id)
 {
-    struct compile_status status = { .compiled_iseq = iseq->body, .compiled_id = id };
+    // For performance, we verify stack size only on compilation time (mjit_compile.inc.erb) without --jit-debug
+    if (!mjit_opts.debug) {
+        fprintf(f, "#undef OPT_CHECKED_RUN\n");
+        fprintf(f, "#define OPT_CHECKED_RUN 0\n\n");
+    }
+
+    struct compile_status status = { .compiled_iseq = &iseq->body, .compiled_id = id };
     INIT_COMPILE_STATUS(status, iseq->body, true);
-    if ((iseq->body->ci_size > 0 && status.cc_entries_index == -1)
+    if ((iseq->body.ci_size > 0 && status.cc_entries_index == -1)
         || (status.is_entries != NULL && !mjit_copy_cache_from_main_thread(iseq, status.is_entries))) {
         return false;
     }

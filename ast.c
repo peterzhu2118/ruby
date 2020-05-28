@@ -208,7 +208,7 @@ ast_s_of(rb_execution_context_t *ec, VALUE module, VALUE body)
     if (!iseq) return Qnil;
 
     path = rb_iseq_path(iseq);
-    node_id = iseq->body->location.node_id;
+    node_id = iseq->body.location.node_id;
     if (!NIL_P(lines = script_lines(path))) {
         node = rb_ast_parse_array(lines);
     }

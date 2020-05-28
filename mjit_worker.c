@@ -163,7 +163,7 @@ struct rb_mjit_unit {
     struct rb_mjit_compile_info compile_info;
     // captured CC values, they should be marked with iseq.
     const struct rb_callcache **cc_entries;
-    unsigned int cc_entries_size; // iseq->body->ci_size + ones of inlined iseqs
+    unsigned int cc_entries_size; // iseq->body.ci_size + ones of inlined iseqs
 };
 
 // Linked list of struct rb_mjit_unit.
@@ -429,8 +429,8 @@ static void
 free_unit(struct rb_mjit_unit *unit)
 {
     if (unit->iseq) { // ISeq is not GCed
-        unit->iseq->body->jit_func = (mjit_func_t)NOT_COMPILED_JIT_ISEQ_FUNC;
-        unit->iseq->body->jit_unit = NULL;
+        unit->iseq->body.jit_func = (mjit_func_t)NOT_COMPILED_JIT_ISEQ_FUNC;
+        unit->iseq->body.jit_unit = NULL;
     }
     if (unit->cc_entries) {
         void *entries = (void *)unit->cc_entries;
@@ -520,7 +520,7 @@ get_from_list(struct rb_mjit_unit_list *list)
             continue;
         }
 
-        if (best == NULL || best->iseq->body->total_calls < unit->iseq->body->total_calls) {
+        if (best == NULL || best->iseq->body.total_calls < unit->iseq->body.total_calls) {
             best = unit;
         }
     }
@@ -711,7 +711,7 @@ sprint_funcname(char *funcname, const struct rb_mjit_unit *unit)
         path = strstr(path, version) + strlen(version);
 
     // Annotate all-normalized method names
-    const char *method = RSTRING_PTR(iseq->body->location.label);
+    const char *method = RSTRING_PTR(iseq->body.location.label);
     if (!strcmp(method, "[]")) method = "AREF";
     if (!strcmp(method, "[]=")) method = "ASET";
 
@@ -991,7 +991,7 @@ compact_all_jit_code(void)
 
             if (cur->iseq) { // Check whether GCed or not
                 // Usage of jit_code might be not in a critical section.
-                MJIT_ATOMIC_SET(cur->iseq->body->jit_func, (mjit_func_t)func);
+                MJIT_ATOMIC_SET(cur->iseq->body.jit_func, (mjit_func_t)func);
             }
         }
         CRITICAL_SECTION_FINISH(3, "in compact_all_jit_code to read list");
@@ -1144,12 +1144,12 @@ convert_unit_to_func(struct rb_mjit_unit *unit)
 
     // To make MJIT worker thread-safe against GC.compact, copy ISeq values while `in_jit` is true.
     long iseq_lineno = 0;
-    if (FIXNUM_P(unit->iseq->body->location.first_lineno))
+    if (FIXNUM_P(unit->iseq->body.location.first_lineno))
         // FIX2INT may fallback to rb_num2long(), which is a method call and dangerous in MJIT worker. So using only FIX2LONG.
-        iseq_lineno = FIX2LONG(unit->iseq->body->location.first_lineno);
-    char *iseq_label = alloca(RSTRING_LEN(unit->iseq->body->location.label) + 1);
+        iseq_lineno = FIX2LONG(unit->iseq->body.location.first_lineno);
+    char *iseq_label = alloca(RSTRING_LEN(unit->iseq->body.location.label) + 1);
     char *iseq_path  = alloca(RSTRING_LEN(rb_iseq_path(unit->iseq)) + 1);
-    strcpy(iseq_label, RSTRING_PTR(unit->iseq->body->location.label));
+    strcpy(iseq_label, RSTRING_PTR(unit->iseq->body.location.label));
     strcpy(iseq_path,  RSTRING_PTR(rb_iseq_path(unit->iseq)));
 
     verbose(2, "start compilation: %s@%s:%ld -> %s", iseq_label, iseq_path, iseq_lineno, c_file);
@@ -1375,7 +1375,7 @@ mjit_worker(void)
                     add_to_list(unit, &active_units);
                 }
                 // Usage of jit_code might be not in a critical section.
-                MJIT_ATOMIC_SET(unit->iseq->body->jit_func, func);
+                MJIT_ATOMIC_SET(unit->iseq->body.jit_func, func);
             }
             else {
                 free_unit(unit);

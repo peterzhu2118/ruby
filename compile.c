@@ -566,11 +566,11 @@ static void
 verify_call_cache(rb_iseq_t *iseq)
 {
 #if CPDEBUG
-    // fprintf(stderr, "ci_size:%d\t", iseq->body->ci_size); rp(iseq);
+    // fprintf(stderr, "ci_size:%d\t", iseq->body.ci_size); rp(iseq);
 
     VALUE *original = rb_iseq_original_iseq(iseq);
     size_t i = 0;
-    while (i < iseq->body->iseq_size) {
+    while (i < iseq->body.iseq_size) {
         VALUE insn = original[i];
         const char *types = insn_op_types(insn);
 
@@ -588,8 +588,8 @@ verify_call_cache(rb_iseq_t *iseq)
         i += insn_len(insn);
     }
 
-    for (unsigned int i=0; i<iseq->body->ci_size; i++) {
-        struct rb_call_data *cd = &iseq->body->call_data[i];
+    for (unsigned int i=0; i<iseq->body.ci_size; i++) {
+        struct rb_call_data *cd = &iseq->body.call_data[i];
         const struct rb_callinfo *ci = cd->ci;
         const struct rb_callcache *cc = cd->cc;
         if (cc != NULL && cc != vm_cc_empty()) {
@@ -688,7 +688,7 @@ rb_iseq_compile_node(rb_iseq_t *iseq, const NODE *node)
 	iseq_set_local_table(iseq, node->nd_tbl);
 	iseq_set_arguments(iseq, ret, node->nd_args);
 
-	switch (iseq->body->type) {
+	switch (iseq->body.type) {
 	  case ISEQ_TYPE_BLOCK:
 	    {
 		LABEL *start = ISEQ_COMPILE_DATA(iseq)->start_label = NEW_LABEL(0);
@@ -698,12 +698,12 @@ rb_iseq_compile_node(rb_iseq_t *iseq, const NODE *node)
 		end->rescued = LABEL_RESCUE_END;
 
 		ADD_TRACE(ret, RUBY_EVENT_B_CALL);
-		ADD_INSN (ret, FIX2INT(iseq->body->location.first_lineno), nop);
+		ADD_INSN (ret, FIX2INT(iseq->body.location.first_lineno), nop);
 		ADD_LABEL(ret, start);
 		CHECK(COMPILE(ret, "block body", node->nd_body));
 		ADD_LABEL(ret, end);
 		ADD_TRACE(ret, RUBY_EVENT_B_RETURN);
-		ISEQ_COMPILE_DATA(iseq)->last_line = iseq->body->location.code_location.end_pos.lineno;
+		ISEQ_COMPILE_DATA(iseq)->last_line = iseq->body.location.code_location.end_pos.lineno;
 
 		/* wide range catch handler must put at last */
 		ADD_CATCH_ENTRY(CATCH_TYPE_REDO, start, end, NULL, start);
@@ -736,7 +736,7 @@ rb_iseq_compile_node(rb_iseq_t *iseq, const NODE *node)
 	const char *m;
 #define INVALID_ISEQ_TYPE(type) \
 	ISEQ_TYPE_##type: m = #type; goto invalid_iseq_type
-	switch (iseq->body->type) {
+	switch (iseq->body.type) {
 	  case INVALID_ISEQ_TYPE(METHOD);
 	  case INVALID_ISEQ_TYPE(CLASS);
 	  case INVALID_ISEQ_TYPE(BLOCK);
@@ -756,7 +756,7 @@ rb_iseq_compile_node(rb_iseq_t *iseq, const NODE *node)
 	    CHECK(COMPILE(ret, "ensure", node));
 	    break;
 	  default:
-	    COMPILE_ERROR(ERROR_ARGS "unknown scope: %d", iseq->body->type);
+	    COMPILE_ERROR(ERROR_ARGS "unknown scope: %d", iseq->body.type);
 	    return COMPILE_NG;
 	  invalid_iseq_type:
 	    COMPILE_ERROR(ERROR_ARGS "compile/ISEQ_TYPE_%s should not be reached", m);
@@ -764,7 +764,7 @@ rb_iseq_compile_node(rb_iseq_t *iseq, const NODE *node)
 	}
     }
 
-    if (iseq->body->type == ISEQ_TYPE_RESCUE || iseq->body->type == ISEQ_TYPE_ENSURE) {
+    if (iseq->body.type == ISEQ_TYPE_RESCUE || iseq->body.type == ISEQ_TYPE_ENSURE) {
 	ADD_GETLOCAL(ret, 0, LVAR_ERRINFO, 0);
 	ADD_INSN1(ret, 0, throw, INT2FIX(0) /* continue throw */ );
     }
@@ -789,10 +789,10 @@ rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
 #if OPT_DIRECT_THREADED_CODE || OPT_CALL_THREADED_CODE
     const void * const *table = rb_vm_get_insns_address_table();
     unsigned int i;
-    VALUE *encoded = (VALUE *)iseq->body->iseq_encoded;
+    VALUE *encoded = (VALUE *)iseq->body.iseq_encoded;
 
-    for (i = 0; i < iseq->body->iseq_size; /* */ ) {
-	int insn = (int)iseq->body->iseq_encoded[i];
+    for (i = 0; i < iseq->body.iseq_size; /* */ ) {
+	int insn = (int)iseq->body.iseq_encoded[i];
 	int len = insn_len(insn);
 	encoded[i] = (VALUE)table[insn];
 	i += len;
@@ -808,14 +808,14 @@ rb_iseq_original_iseq(const rb_iseq_t *iseq) /* cold path */
     VALUE *original_code;
 
     if (ISEQ_ORIGINAL_ISEQ(iseq)) return ISEQ_ORIGINAL_ISEQ(iseq);
-    original_code = ISEQ_ORIGINAL_ISEQ_ALLOC(iseq, iseq->body->iseq_size);
-    MEMCPY(original_code, iseq->body->iseq_encoded, VALUE, iseq->body->iseq_size);
+    original_code = ISEQ_ORIGINAL_ISEQ_ALLOC(iseq, iseq->body.iseq_size);
+    MEMCPY(original_code, iseq->body.iseq_encoded, VALUE, iseq->body.iseq_size);
 
 #if OPT_DIRECT_THREADED_CODE || OPT_CALL_THREADED_CODE
     {
 	unsigned int i;
 
-	for (i = 0; i < iseq->body->iseq_size; /* */ ) {
+	for (i = 0; i < iseq->body.iseq_size; /* */ ) {
 	    const void *addr = (const void *)original_code[i];
 	    const int insn = rb_vm_insn_addr2insn(addr);
 
@@ -1235,8 +1235,8 @@ new_callinfo(rb_iseq_t *iseq, ID mid, int argc, unsigned int flag, struct rb_cal
         argc += kw_arg->keyword_len;
     }
 
-    // fprintf(stderr, "[%d] id:%s\t", (int)iseq->body->ci_size, rb_id2name(mid)); rp(iseq);
-    iseq->body->ci_size++;
+    // fprintf(stderr, "[%d] id:%s\t", (int)iseq->body.ci_size, rb_id2name(mid)); rp(iseq);
+    iseq->body.ci_size++;
     const struct rb_callinfo *ci = vm_ci_new(mid, flag, argc, kw_arg);
     RB_OBJ_WRITTEN(iseq, Qundef, ci);
     return ci;
@@ -1289,7 +1289,7 @@ set_catch_except_p(struct rb_iseq_constant_body *body)
 {
     body->catch_except_p = TRUE;
     if (body->parent_iseq != NULL) {
-        set_catch_except_p(body->parent_iseq->body);
+        set_catch_except_p(&body->parent_iseq->body);
     }
 }
 
@@ -1421,10 +1421,10 @@ iseq_setup(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
     if (!rb_iseq_translate_threaded_code(iseq)) return COMPILE_NG;
 
     debugs("[compile step 6 (update_catch_except_flags)] \n");
-    update_catch_except_flags(iseq->body);
+    update_catch_except_flags(&iseq->body);
 
 #if VM_INSN_INFO_TABLE_IMPL == 2
-    if (iseq->body->insns_info.succ_index_table == NULL) {
+    if (iseq->body.insns_info.succ_index_table == NULL) {
         debugs("[compile step 7 (rb_iseq_insns_info_encode_positions)] \n");
         rb_iseq_insns_info_encode_positions(iseq);
     }
@@ -1443,8 +1443,8 @@ iseq_setup(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
 static int
 iseq_set_exception_local_table(rb_iseq_t *iseq)
 {
-    iseq->body->local_table_size = numberof(rb_iseq_shared_exc_local_tbl);
-    iseq->body->local_table = rb_iseq_shared_exc_local_tbl;
+    iseq->body.local_table_size = numberof(rb_iseq_shared_exc_local_tbl);
+    iseq->body.local_table = rb_iseq_shared_exc_local_tbl;
     return COMPILE_OK;
 }
 
@@ -1452,9 +1452,9 @@ static int
 get_lvar_level(const rb_iseq_t *iseq)
 {
     int lev = 0;
-    while (iseq != iseq->body->local_iseq) {
+    while (iseq != iseq->body.local_iseq) {
 	lev++;
-	iseq = iseq->body->parent_iseq;
+	iseq = iseq->body.parent_iseq;
     }
     return lev;
 }
@@ -1464,8 +1464,8 @@ get_dyna_var_idx_at_raw(const rb_iseq_t *iseq, ID id)
 {
     unsigned int i;
 
-    for (i = 0; i < iseq->body->local_table_size; i++) {
-	if (iseq->body->local_table[i] == id) {
+    for (i = 0; i < iseq->body.local_table_size; i++) {
+	if (iseq->body.local_table[i] == id) {
 	    return (int)i;
 	}
     }
@@ -1475,7 +1475,7 @@ get_dyna_var_idx_at_raw(const rb_iseq_t *iseq, ID id)
 static int
 get_local_var_idx(const rb_iseq_t *iseq, ID id)
 {
-    int idx = get_dyna_var_idx_at_raw(iseq->body->local_iseq, id);
+    int idx = get_dyna_var_idx_at_raw(iseq->body.local_iseq, id);
 
     if (idx < 0) {
         COMPILE_ERROR(iseq, ISEQ_LAST_LINE(iseq),
@@ -1496,7 +1496,7 @@ get_dyna_var_idx(const rb_iseq_t *iseq, ID id, int *level, int *ls)
 	if (idx >= 0) {
 	    break;
 	}
-	iseq = iseq->body->parent_iseq;
+	iseq = iseq->body.parent_iseq;
 	lv++;
     }
 
@@ -1506,7 +1506,7 @@ get_dyna_var_idx(const rb_iseq_t *iseq, ID id, int *level, int *ls)
     }
 
     *level = lv;
-    *ls = iseq->body->local_table_size;
+    *ls = iseq->body.local_table_size;
     return idx;
 }
 
@@ -1515,10 +1515,10 @@ iseq_local_block_param_p(const rb_iseq_t *iseq, unsigned int idx, unsigned int l
 {
     const struct rb_iseq_constant_body *body;
     while (level > 0) {
-	iseq = iseq->body->parent_iseq;
+	iseq = iseq->body.parent_iseq;
 	level--;
     }
-    body = iseq->body;
+    body = &iseq->body;
     if (body->local_iseq == iseq && /* local variables */
 	body->param.flags.has_block &&
 	body->local_table_size - body->param.block_start == idx) {
@@ -1571,7 +1571,7 @@ iseq_add_setlocal(rb_iseq_t *iseq, LINK_ANCHOR *const seq, int line, int idx, in
 static void
 iseq_calc_param_size(rb_iseq_t *iseq)
 {
-    struct rb_iseq_constant_body *const body = iseq->body;
+    struct rb_iseq_constant_body *const body = &iseq->body;
     if (body->param.flags.has_opt ||
 	body->param.flags.has_post ||
 	body->param.flags.has_rest ||
@@ -1611,7 +1611,7 @@ iseq_set_arguments_keywords(rb_iseq_t *iseq, LINK_ANCHOR *const optargs,
 			    const struct rb_args_info *args, int arg_size)
 {
     const NODE *node = args->kw_args;
-    struct rb_iseq_constant_body *const body = iseq->body;
+    struct rb_iseq_constant_body *const body = &iseq->body;
     struct rb_iseq_param_keyword *keyword;
     const VALUE default_values = rb_ary_tmp_new(1);
     const VALUE complex_mark = rb_str_tmp_new(0);
@@ -1693,7 +1693,7 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *const optargs, const NODE *cons
     debugs("iseq_set_arguments: %s\n", node_args ? "" : "0");
 
     if (node_args) {
-	struct rb_iseq_constant_body *const body = iseq->body;
+	struct rb_iseq_constant_body *const body = &iseq->body;
 	struct rb_args_info *args = node_args->nd_ainfo;
 	ID rest_id = 0;
 	int last_comma = 0;
@@ -1828,11 +1828,11 @@ iseq_set_local_table(rb_iseq_t *iseq, const ID *tbl)
     if (size > 0) {
 	ID *ids = (ID *)ALLOC_N(ID, size);
 	MEMCPY(ids, tbl, ID, size);
-	iseq->body->local_table = ids;
+	iseq->body.local_table = ids;
     }
-    iseq->body->local_table_size = size;
+    iseq->body.local_table_size = size;
 
-    debugs("iseq_set_local_table: %u\n", iseq->body->local_table_size);
+    debugs("iseq_set_local_table: %u\n", iseq->body.local_table_size);
     return COMPILE_OK;
 }
 
@@ -1928,7 +1928,7 @@ get_ivar_ic_value(rb_iseq_t *iseq,ID id)
 	tbl = rb_id_table_create(1);
 	ISEQ_COMPILE_DATA(iseq)->ivar_cache_table = tbl;
     }
-    val = INT2FIX(iseq->body->is_size++);
+    val = INT2FIX(iseq->body.is_size++);
     rb_id_table_insert(tbl,id,val);
     return val;
 }
@@ -2087,7 +2087,7 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
 {
     VALUE iseqv = (VALUE)iseq;
     struct iseq_insn_info_entry *insns_info;
-    struct rb_iseq_constant_body *const body = iseq->body;
+    struct rb_iseq_constant_body *const body = &iseq->body;
     unsigned int *positions;
     LINK_ELEMENT *list;
     VALUE *generated_iseq;
@@ -2284,7 +2284,7 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
 			return COMPILE_NG;
 		    }
 		}
-		if (add_insn_info(insns_info, positions, insns_info_index, code_index, iobj)) insns_info_index++;
+        if (add_insn_info(insns_info, positions, insns_info_index, code_index, iobj)) insns_info_index++;
 		code_index += len;
 		break;
 	    }
@@ -2409,12 +2409,12 @@ iseq_set_exception_table(rb_iseq_t *iseq)
 		entry->cont = 0;
 	    }
 	}
-	iseq->body->catch_table = table;
+	iseq->body.catch_table = table;
 	RB_OBJ_WRITE(iseq, &ISEQ_COMPILE_DATA(iseq)->catch_table_ary, 0); /* free */
     }
     else {
         no_catch_table:
-          iseq->body->catch_table = NULL;
+          iseq->body.catch_table = NULL;
     }
 
     return COMPILE_OK;
@@ -2433,10 +2433,10 @@ static int
 iseq_set_optargs_table(rb_iseq_t *iseq)
 {
     int i;
-    VALUE *opt_table = (VALUE *)iseq->body->param.opt_table;
+    VALUE *opt_table = (VALUE *)iseq->body.param.opt_table;
 
-    if (iseq->body->param.flags.has_opt) {
-	for (i = 0; i < iseq->body->param.opt_num + 1; i++) {
+    if (iseq->body.param.flags.has_opt) {
+	for (i = 0; i < iseq->body.param.opt_num + 1; i++) {
 	    opt_table[i] = label_get_position((LABEL *)opt_table[i]);
 	}
     }
@@ -2580,7 +2580,7 @@ remove_unreachable_chunk(rb_iseq_t *iseq, LINK_ELEMENT *i)
     i = first;
     do {
 	if (IS_INSN(i)) {
-	    struct rb_iseq_constant_body *body = iseq->body;
+	    struct rb_iseq_constant_body *body = &iseq->body;
 	    VALUE insn = INSN_OF(i);
 	    int pos, len = insn_len(insn);
 	    for (pos = 0; pos < len; ++pos) {
@@ -3419,7 +3419,7 @@ iseq_specialized_instruction(rb_iseq_t *iseq, INSN *iobj)
 static inline int
 tailcallable_p(rb_iseq_t *iseq)
 {
-    switch (iseq->body->type) {
+    switch (iseq->body.type) {
       case ISEQ_TYPE_TOP:
       case ISEQ_TYPE_EVAL:
       case ISEQ_TYPE_MAIN:
@@ -3818,7 +3818,7 @@ compile_flip_flop(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const nod
 {
     const int line = nd_line(node);
     LABEL *lend = NEW_LABEL(line);
-    rb_num_t cnt = ISEQ_FLIP_CNT_INCREMENT(iseq->body->local_iseq)
+    rb_num_t cnt = ISEQ_FLIP_CNT_INCREMENT(iseq->body.local_iseq)
 	+ VM_SVAR_FLIPFLOP_START;
     VALUE key = INT2FIX(cnt);
 
@@ -4969,7 +4969,7 @@ defined_expr(rb_iseq_t *iseq, LINK_ANCHOR *const ret,
             rb_iseq_new_with_callback_new_callback(build_defined_rescue_iseq, NULL);
         rescue = new_child_iseq_with_callback(iseq, ifunc,
 				      rb_str_concat(rb_str_new2("defined guard in "),
-						    iseq->body->location.label),
+						    iseq->body.location.label),
 				      iseq, ISEQ_TYPE_RESCUE, 0);
 	lstart->rescued = LABEL_RESCUE_BEG;
 	lend->rescued = LABEL_RESCUE_END;
@@ -5010,20 +5010,20 @@ make_name_for_block(const rb_iseq_t *orig_iseq)
     int level = 1;
     const rb_iseq_t *iseq = orig_iseq;
 
-    if (orig_iseq->body->parent_iseq != 0) {
-	while (orig_iseq->body->local_iseq != iseq) {
-	    if (iseq->body->type == ISEQ_TYPE_BLOCK) {
+    if (orig_iseq->body.parent_iseq != 0) {
+	while (orig_iseq->body.local_iseq != iseq) {
+	    if (iseq->body.type == ISEQ_TYPE_BLOCK) {
 		level++;
 	    }
-	    iseq = iseq->body->parent_iseq;
+	    iseq = iseq->body.parent_iseq;
 	}
     }
 
     if (level == 1) {
-	return rb_sprintf("block in %"PRIsVALUE, iseq->body->location.label);
+	return rb_sprintf("block in %"PRIsVALUE, iseq->body.location.label);
     }
     else {
-	return rb_sprintf("block (%d levels) in %"PRIsVALUE, level, iseq->body->location.label);
+	return rb_sprintf("block (%d levels) in %"PRIsVALUE, level, iseq->body.location.label);
     }
 }
 
@@ -5202,7 +5202,7 @@ build_postexe_iseq(rb_iseq_t *iseq, LINK_ANCHOR *ret, const void *ptr)
     const NODE *body = ptr;
     int line = nd_line(body);
     VALUE argc = INT2FIX(0);
-    const rb_iseq_t *block = NEW_CHILD_ISEQ(body, make_name_for_block(iseq->body->parent_iseq), ISEQ_TYPE_BLOCK, line);
+    const rb_iseq_t *block = NEW_CHILD_ISEQ(body, make_name_for_block(iseq->body.parent_iseq), ISEQ_TYPE_BLOCK, line);
 
     ADD_INSN1(ret, line, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
     ADD_CALL_WITH_BLOCK(ret, line, id_core_set_postexe, argc, block);
@@ -5286,7 +5286,7 @@ optimizable_range_item_p(const NODE *n)
 static int
 compile_if(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, int popped, const enum node_type type)
 {
-    struct rb_iseq_constant_body *const body = iseq->body;
+    struct rb_iseq_constant_body *const body = &iseq->body;
     const NODE *const node_body = type == NODE_IF ? node->nd_body : node->nd_else;
     const NODE *const node_else = type == NODE_IF ? node->nd_else : node->nd_body;
 
@@ -6114,9 +6114,9 @@ iseq_compile_pattern_each(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *c
         ADD_INSNL(ret, line, jump, unmatched);
         break;
       case NODE_LASGN: {
-        struct rb_iseq_constant_body *const body = iseq->body;
+        struct rb_iseq_constant_body *const body = &iseq->body;
         ID id = node->nd_vid;
-        int idx = body->local_iseq->body->local_table_size - get_local_var_idx(iseq, id);
+        int idx = body->local_iseq->body.local_table_size - get_local_var_idx(iseq, id);
 
         if (in_alt_pattern) {
             const char *name = rb_id2name(id);
@@ -6512,7 +6512,7 @@ compile_break(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, i
 	    ADD_INSN(ret, line, putnil);
 	}
     }
-    else if (iseq->body->type == ISEQ_TYPE_BLOCK) {
+    else if (iseq->body.type == ISEQ_TYPE_BLOCK) {
       break_by_insn:
 	/* escape from block */
 	CHECK(COMPILE(ret, "break val (block)", node->nd_stts));
@@ -6521,13 +6521,13 @@ compile_break(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, i
 	    ADD_INSN(ret, line, pop);
 	}
     }
-    else if (iseq->body->type == ISEQ_TYPE_EVAL) {
+    else if (iseq->body.type == ISEQ_TYPE_EVAL) {
       break_in_eval:
 	COMPILE_ERROR(ERROR_ARGS "Can't escape from eval with break");
 	return COMPILE_NG;
     }
     else {
-	const rb_iseq_t *ip = iseq->body->parent_iseq;
+	const rb_iseq_t *ip = iseq->body.parent_iseq;
 
 	while (ip) {
 	    if (!ISEQ_COMPILE_DATA(ip)) {
@@ -6539,14 +6539,14 @@ compile_break(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, i
                 throw_flag = VM_THROW_NO_ESCAPE_FLAG;
 		goto break_by_insn;
 	    }
-	    else if (ip->body->type == ISEQ_TYPE_BLOCK) {
+	    else if (ip->body.type == ISEQ_TYPE_BLOCK) {
 		goto break_by_insn;
 	    }
-	    else if (ip->body->type == ISEQ_TYPE_EVAL) {
+	    else if (ip->body.type == ISEQ_TYPE_EVAL) {
 		goto break_in_eval;
 	    }
 
-	    ip = ip->body->parent_iseq;
+	    ip = ip->body.parent_iseq;
 	}
 	COMPILE_ERROR(ERROR_ARGS "Invalid break");
 	return COMPILE_NG;
@@ -6588,7 +6588,7 @@ compile_next(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, in
 	    ADD_INSN(ret, line, putnil);
 	}
     }
-    else if (iseq->body->type == ISEQ_TYPE_EVAL) {
+    else if (iseq->body.type == ISEQ_TYPE_EVAL) {
       next_in_eval:
 	COMPILE_ERROR(ERROR_ARGS "Can't escape from eval with next");
 	return COMPILE_NG;
@@ -6607,14 +6607,14 @@ compile_next(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, in
 		/* while loop */
 		break;
 	    }
-	    else if (ip->body->type == ISEQ_TYPE_BLOCK) {
+	    else if (ip->body.type == ISEQ_TYPE_BLOCK) {
 		break;
 	    }
-	    else if (ip->body->type == ISEQ_TYPE_EVAL) {
+	    else if (ip->body.type == ISEQ_TYPE_EVAL) {
 		goto next_in_eval;
 	    }
 
-	    ip = ip->body->parent_iseq;
+	    ip = ip->body.parent_iseq;
 	}
 	if (ip != 0) {
 	    CHECK(COMPILE(ret, "next val", node->nd_stts));
@@ -6649,7 +6649,7 @@ compile_redo(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, in
 	    ADD_INSN(ret, line, putnil);
 	}
     }
-    else if (iseq->body->type == ISEQ_TYPE_EVAL) {
+    else if (iseq->body.type == ISEQ_TYPE_EVAL) {
       redo_in_eval:
 	COMPILE_ERROR(ERROR_ARGS "Can't escape from eval with redo");
 	return COMPILE_NG;
@@ -6680,14 +6680,14 @@ compile_redo(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, in
 	    if (ISEQ_COMPILE_DATA(ip)->redo_label != 0) {
 		break;
 	    }
-	    else if (ip->body->type == ISEQ_TYPE_BLOCK) {
+	    else if (ip->body.type == ISEQ_TYPE_BLOCK) {
 		break;
 	    }
-	    else if (ip->body->type == ISEQ_TYPE_EVAL) {
+	    else if (ip->body.type == ISEQ_TYPE_EVAL) {
 		goto redo_in_eval;
 	    }
 
-	    ip = ip->body->parent_iseq;
+	    ip = ip->body.parent_iseq;
 	}
 	if (ip != 0) {
 	    ADD_INSN(ret, line, putnil);
@@ -6710,7 +6710,7 @@ compile_retry(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, i
 {
     const int line = nd_line(node);
 
-    if (iseq->body->type == ISEQ_TYPE_RESCUE) {
+    if (iseq->body.type == ISEQ_TYPE_RESCUE) {
 	ADD_INSN(ret, line, putnil);
 	ADD_INSN1(ret, line, throw, INT2FIX(TAG_RETRY));
 
@@ -6733,7 +6733,7 @@ compile_rescue(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, 
     LABEL *lend = NEW_LABEL(line);
     LABEL *lcont = NEW_LABEL(line);
     const rb_iseq_t *rescue = NEW_CHILD_ISEQ(node->nd_resq,
-					     rb_str_concat(rb_str_new2("rescue in "), iseq->body->location.label),
+					     rb_str_concat(rb_str_new2("rescue in "), iseq->body.location.label),
 					     ISEQ_TYPE_RESCUE, line);
 
     lstart->rescued = LABEL_RESCUE_BEG;
@@ -6819,7 +6819,7 @@ compile_ensure(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, 
     const int line = nd_line(node);
     DECL_ANCHOR(ensr);
     const rb_iseq_t *ensure = NEW_CHILD_ISEQ(node->nd_ensr,
-					     rb_str_concat(rb_str_new2 ("ensure in "), iseq->body->location.label),
+					     rb_str_concat(rb_str_new2 ("ensure in "), iseq->body.location.label),
 					     ISEQ_TYPE_ENSURE, line);
     LABEL *lstart = NEW_LABEL(line);
     LABEL *lend = NEW_LABEL(line);
@@ -6867,15 +6867,15 @@ compile_return(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *const node, 
     const int line = nd_line(node);
 
     if (iseq) {
-	enum iseq_type type = iseq->body->type;
+	enum iseq_type type = iseq->body.type;
 	const rb_iseq_t *is = iseq;
 	enum iseq_type t = type;
 	const NODE *retval = node->nd_stts;
 	LABEL *splabel = 0;
 
 	while (t == ISEQ_TYPE_RESCUE || t == ISEQ_TYPE_ENSURE) {
-	    if (!(is = is->body->parent_iseq)) break;
-	    t = is->body->type;
+	    if (!(is = is->body.parent_iseq)) break;
+	    t = is->body.type;
 	}
 	switch (t) {
 	  case ISEQ_TYPE_TOP:
@@ -7059,13 +7059,13 @@ delegate_call_p(const rb_iseq_t *iseq, unsigned int argc, const LINK_ANCHOR *arg
         *pstart_index = 0;
         return TRUE;
     }
-    else if (argc <= iseq->body->local_table_size) {
+    else if (argc <= iseq->body.local_table_size) {
         unsigned int start=0;
 
         // local_table: [p1, p2, p3, l1, l2, l3]
         // arguments:           [p3, l1, l2]     -> 2
         for (start = 0;
-             argc + start <= iseq->body->local_table_size;
+             argc + start <= iseq->body.local_table_size;
              start++) {
             const LINK_ELEMENT *elem = FIRST_ELEMENT(args);
 
@@ -7076,12 +7076,12 @@ delegate_call_p(const rb_iseq_t *iseq, unsigned int argc, const LINK_ANCHOR *arg
                     int local_level = FIX2INT(OPERAND_AT(elem, 1));
 
                     if (local_level == 0) {
-                        unsigned int index = iseq->body->local_table_size - (local_index - VM_ENV_DATA_SIZE + 1);
+                        unsigned int index = iseq->body.local_table_size - (local_index - VM_ENV_DATA_SIZE + 1);
                         if (0) { // for debug
                             fprintf(stderr, "lvar:%s (%d), id:%s (%d) local_index:%d, local_size:%d\n",
-                                    rb_id2name(iseq->body->local_table[i]),     i,
-                                    rb_id2name(iseq->body->local_table[index]), index,
-                                    local_index, (int)iseq->body->local_table_size);
+                                    rb_id2name(iseq->body.local_table[i]),     i,
+                                    rb_id2name(iseq->body.local_table[index]), index,
+                                    local_index, (int)iseq->body.local_table_size);
                         }
                         if (i == index) {
                             elem = elem->next;
@@ -7360,7 +7360,7 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, const NODE *node, int poppe
 static int
 check_yield_place(const rb_iseq_t *iseq)
 {
-    switch (iseq->body->local_iseq->body->type) {
+    switch (iseq->body.local_iseq->body.type) {
       case ISEQ_TYPE_TOP:
       case ISEQ_TYPE_MAIN:
       case ISEQ_TYPE_CLASS:
@@ -7375,7 +7375,7 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
 {
     const int line = (int)nd_line(node);
     const enum node_type type = nd_type(node);
-    struct rb_iseq_constant_body *const body = iseq->body;
+    struct rb_iseq_constant_body *const body = &iseq->body;
 
     if (ISEQ_COMPILE_DATA(iseq)->last_line == line) {
 	/* ignore */
@@ -7485,7 +7485,7 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
 
       case NODE_LASGN:{
 	ID id = node->nd_vid;
-	int idx = body->local_iseq->body->local_table_size - get_local_var_idx(iseq, id);
+	int idx = body->local_iseq->body.local_table_size - get_local_var_idx(iseq, id);
 
 	debugs("lvar: %s idx: %d\n", rb_id2name(id), idx);
 	CHECK(COMPILE(ret, "rvalue", node->nd_value));
@@ -7943,7 +7943,7 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
 	    /* NODE_ZSUPER */
 	    int i;
 	    const rb_iseq_t *liseq = body->local_iseq;
-	    const struct rb_iseq_constant_body *const local_body = liseq->body;
+	    const struct rb_iseq_constant_body *const local_body = &liseq->body;
 	    const struct rb_iseq_param_keyword *const local_kwd = local_body->param.keyword;
 	    int lvar_level = get_lvar_level(iseq);
 
@@ -8114,7 +8114,7 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
       case NODE_LVAR:{
 	if (!popped) {
 	    ID id = node->nd_vid;
-	    int idx = body->local_iseq->body->local_table_size - get_local_var_idx(iseq, id);
+	    int idx = body->local_iseq->body.local_table_size - get_local_var_idx(iseq, id);
 
 	    debugs("id: %s idx: %d\n", rb_id2name(id), idx);
 	    ADD_GETLOCAL(ret, line, idx, get_lvar_level(iseq));
@@ -8634,10 +8634,10 @@ iseq_compile_each0(rb_iseq_t *iseq, LINK_ANCHOR *const ret, const NODE *node, in
 		const rb_iseq_t *ip = iseq;
 		int level = 0;
 		while (ip) {
-		    if (ip->body->type == ISEQ_TYPE_RESCUE) {
+		    if (ip->body.type == ISEQ_TYPE_RESCUE) {
 			break;
 		    }
-		    ip = ip->body->parent_iseq;
+		    ip = ip->body.parent_iseq;
 		    level++;
 		}
 		if (ip) {
@@ -9310,8 +9310,8 @@ iseq_build_from_ary_body(rb_iseq_t *iseq, LINK_ANCHOR *const anchor,
 		      case TS_IC:
                       case TS_IVC:  /* inline ivar cache */
 			argv[j] = op;
-			if (NUM2UINT(op) >= iseq->body->is_size) {
-			    iseq->body->is_size = NUM2INT(op) + 1;
+			if (NUM2UINT(op) >= iseq->body.is_size) {
+			    iseq->body.is_size = NUM2INT(op) + 1;
 			}
 			break;
                       case TS_CALLDATA:
@@ -9399,13 +9399,13 @@ iseq_build_kw(rb_iseq_t *iseq, VALUE params, VALUE keywords)
     ID *ids;
     struct rb_iseq_param_keyword *keyword = ZALLOC(struct rb_iseq_param_keyword);
 
-    iseq->body->param.flags.has_kw = TRUE;
+    iseq->body.param.flags.has_kw = TRUE;
 
     keyword->num = len;
 #define SYM(s) ID2SYM(rb_intern(#s))
     (void)int_param(&keyword->bits_start, params, SYM(kwbits));
     i = keyword->bits_start - keyword->num;
-    ids = (ID *)&iseq->body->local_table[i];
+    ids = (ID *)&iseq->body.local_table[i];
 #undef SYM
 
     /* required args */
@@ -9528,8 +9528,8 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
     INIT_ANCHOR(anchor);
 
     len = RARRAY_LENINT(locals);
-    iseq->body->local_table_size = len;
-    iseq->body->local_table = tbl = len > 0 ? (ID *)ALLOC_N(ID, iseq->body->local_table_size) : NULL;
+    iseq->body.local_table_size = len;
+    iseq->body.local_table = tbl = len > 0 ? (ID *)ALLOC_N(ID, iseq->body.local_table_size) : NULL;
 
     for (i = 0; i < len; i++) {
 	VALUE lv = RARRAY_AREF(locals, i);
@@ -9542,14 +9542,14 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
 	}
     }
 
-#define INT_PARAM(F) int_param(&iseq->body->param.F, params, SYM(F))
+#define INT_PARAM(F) int_param(&iseq->body.param.F, params, SYM(F))
     if (INT_PARAM(lead_num)) {
-	iseq->body->param.flags.has_lead = TRUE;
+	iseq->body.param.flags.has_lead = TRUE;
     }
-    if (INT_PARAM(post_num)) iseq->body->param.flags.has_post = TRUE;
-    if (INT_PARAM(post_start)) iseq->body->param.flags.has_post = TRUE;
-    if (INT_PARAM(rest_start)) iseq->body->param.flags.has_rest = TRUE;
-    if (INT_PARAM(block_start)) iseq->body->param.flags.has_block = TRUE;
+    if (INT_PARAM(post_num)) iseq->body.param.flags.has_post = TRUE;
+    if (INT_PARAM(post_start)) iseq->body.param.flags.has_post = TRUE;
+    if (INT_PARAM(rest_start)) iseq->body.param.flags.has_rest = TRUE;
+    if (INT_PARAM(block_start)) iseq->body.param.flags.has_block = TRUE;
 #undef INT_PARAM
     {
 #define INT_PARAM(F) F = (int_param(&x, misc, SYM(F)) ? (unsigned int)x : 0)
@@ -9562,9 +9562,9 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
 
     if (RB_TYPE_P(arg_opt_labels, T_ARRAY)) {
 	len = RARRAY_LENINT(arg_opt_labels);
-	iseq->body->param.flags.has_opt = !!(len - 1 >= 0);
+	iseq->body.param.flags.has_opt = !!(len - 1 >= 0);
 
-	if (iseq->body->param.flags.has_opt) {
+	if (iseq->body.param.flags.has_opt) {
 	    VALUE *opt_table = ALLOC_N(VALUE, len);
 
 	    for (i = 0; i < len; i++) {
@@ -9573,8 +9573,8 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
 		opt_table[i] = (VALUE)label;
 	    }
 
-	    iseq->body->param.opt_num = len - 1;
-	    iseq->body->param.opt_table = opt_table;
+	    iseq->body.param.opt_num = len - 1;
+	    iseq->body.param.opt_table = opt_table;
 	}
     }
     else if (!NIL_P(arg_opt_labels)) {
@@ -9583,7 +9583,7 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
     }
 
     if (RB_TYPE_P(keywords, T_ARRAY)) {
-	iseq->body->param.keyword = iseq_build_kw(iseq, params, keywords);
+	iseq->body.param.keyword = iseq_build_kw(iseq, params, keywords);
     }
     else if (!NIL_P(keywords)) {
 	rb_raise(rb_eTypeError, ":keywords param is not an array: %+"PRIsVALUE,
@@ -9591,16 +9591,16 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
     }
 
     if (Qtrue == rb_hash_aref(params, SYM(ambiguous_param0))) {
-	iseq->body->param.flags.ambiguous_param0 = TRUE;
+	iseq->body.param.flags.ambiguous_param0 = TRUE;
     }
 
     if (int_param(&i, params, SYM(kwrest))) {
-	struct rb_iseq_param_keyword *keyword = (struct rb_iseq_param_keyword *)iseq->body->param.keyword;
+	struct rb_iseq_param_keyword *keyword = (struct rb_iseq_param_keyword *)iseq->body.param.keyword;
 	if (keyword == NULL) {
-	    iseq->body->param.keyword = keyword = ZALLOC(struct rb_iseq_param_keyword);
+	    iseq->body.param.keyword = keyword = ZALLOC(struct rb_iseq_param_keyword);
 	}
 	keyword->rest_start = i;
-	iseq->body->param.flags.has_kwrest = TRUE;
+	iseq->body.param.flags.has_kwrest = TRUE;
     }
 #undef SYM
     iseq_calc_param_size(iseq);
@@ -9611,9 +9611,9 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
     /* body */
     iseq_build_from_ary_body(iseq, anchor, body, labels_wrapper);
 
-    iseq->body->param.size = arg_size;
-    iseq->body->local_table_size = local_size;
-    iseq->body->stack_max = stack_max;
+    iseq->body.param.size = arg_size;
+    iseq->body.local_table_size = local_size;
+    iseq->body.stack_max = stack_max;
 }
 
 /* for parser */
@@ -9622,7 +9622,7 @@ int
 rb_dvar_defined(ID id, const rb_iseq_t *iseq)
 {
     if (iseq) {
-	const struct rb_iseq_constant_body *body = iseq->body;
+	const struct rb_iseq_constant_body *body = &iseq->body;
 	while (body->type == ISEQ_TYPE_BLOCK ||
 	       body->type == ISEQ_TYPE_RESCUE ||
 	       body->type == ISEQ_TYPE_ENSURE ||
@@ -9637,7 +9637,7 @@ rb_dvar_defined(ID id, const rb_iseq_t *iseq)
 		}
 	    }
 	    iseq = body->parent_iseq;
-	    body = iseq->body;
+	    body = &iseq->body;
 	}
     }
     return 0;
@@ -9648,7 +9648,7 @@ rb_local_defined(ID id, const rb_iseq_t *iseq)
 {
     if (iseq) {
 	unsigned int i;
-	const struct rb_iseq_constant_body *const body = iseq->body->local_iseq->body;
+	const struct rb_iseq_constant_body *const body = &iseq->body.local_iseq->body;
 
 	for (i=0; i<body->local_table_size; i++) {
 	    if (body->local_table[i] == id) {
@@ -9707,7 +9707,7 @@ for_self_aref(rb_iseq_t *iseq, LINK_ANCHOR *ret, const void *a)
 {
     const accessor_args *const args = (void *)a;
     const int line = args->line;
-    struct rb_iseq_constant_body *const body = iseq->body;
+    struct rb_iseq_constant_body *const body = &iseq->body;
 
     iseq_set_local_table(iseq, 0);
     body->param.lead_num = 0;
@@ -9722,7 +9722,7 @@ for_self_aset(rb_iseq_t *iseq, LINK_ANCHOR *ret, const void *a)
 {
     const accessor_args *const args = (void *)a;
     const int line = args->line;
-    struct rb_iseq_constant_body *const body = iseq->body;
+    struct rb_iseq_constant_body *const body = &iseq->body;
     static const ID vars[] = {1, idUScore};
 
     iseq_set_local_table(iseq, vars);
@@ -10192,7 +10192,7 @@ ibf_load_builtin(const struct ibf_load *load, ibf_offset_t *offset)
 static ibf_offset_t
 ibf_dump_code(struct ibf_dump *dump, const rb_iseq_t *iseq)
 {
-    const struct rb_iseq_constant_body *const body = iseq->body;
+    const struct rb_iseq_constant_body *const body = &iseq->body;
     const int iseq_size = body->iseq_size;
     int code_index;
     const VALUE *orig_code = rb_iseq_original_iseq(iseq);
@@ -10271,7 +10271,7 @@ ibf_load_code(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t bytecod
     ibf_offset_t reading_pos = bytecode_offset;
     VALUE *code = ALLOC_N(VALUE, iseq_size);
 
-    struct rb_iseq_constant_body *load_body = iseq->body;
+    struct rb_iseq_constant_body *load_body = &iseq->body;
     struct rb_call_data *cd_entries = load_body->call_data;
     union iseq_inline_storage_entry *is_entries = load_body->is_entries;
 
@@ -10360,11 +10360,11 @@ ibf_load_code(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t bytecod
 static ibf_offset_t
 ibf_dump_param_opt_table(struct ibf_dump *dump, const rb_iseq_t *iseq)
 {
-    int opt_num = iseq->body->param.opt_num;
+    int opt_num = iseq->body.param.opt_num;
 
     if (opt_num > 0) {
         IBF_W_ALIGN(VALUE);
-        return ibf_dump_write(dump, iseq->body->param.opt_table, sizeof(VALUE) * (opt_num + 1));
+        return ibf_dump_write(dump, iseq->body.param.opt_table, sizeof(VALUE) * (opt_num + 1));
     }
     else {
         return ibf_dump_pos(dump);
@@ -10387,7 +10387,7 @@ ibf_load_param_opt_table(const struct ibf_load *load, ibf_offset_t opt_table_off
 static ibf_offset_t
 ibf_dump_param_keyword(struct ibf_dump *dump, const rb_iseq_t *iseq)
 {
-    const struct rb_iseq_param_keyword *kw = iseq->body->param.keyword;
+    const struct rb_iseq_param_keyword *kw = iseq->body.param.keyword;
 
     if (kw) {
         struct rb_iseq_param_keyword dump_kw = *kw;
@@ -10439,10 +10439,10 @@ static ibf_offset_t
 ibf_dump_insns_info_body(struct ibf_dump *dump, const rb_iseq_t *iseq)
 {
     ibf_offset_t offset = ibf_dump_pos(dump);
-    const struct iseq_insn_info_entry *entries = iseq->body->insns_info.body;
+    const struct iseq_insn_info_entry *entries = iseq->body.insns_info.body;
 
     unsigned int i;
-    for (i = 0; i < iseq->body->insns_info.size; i++) {
+    for (i = 0; i < iseq->body.insns_info.size; i++) {
         ibf_dump_write_small_value(dump, entries[i].line_no);
         ibf_dump_write_small_value(dump, entries[i].events);
     }
@@ -10499,7 +10499,7 @@ ibf_load_insns_info_positions(const struct ibf_load *load, ibf_offset_t position
 static ibf_offset_t
 ibf_dump_local_table(struct ibf_dump *dump, const rb_iseq_t *iseq)
 {
-    const struct rb_iseq_constant_body *const body = iseq->body;
+    const struct rb_iseq_constant_body *const body = &iseq->body;
     const int size = body->local_table_size;
     ID *table = ALLOCA_N(ID, size);
     int i;
@@ -10532,7 +10532,7 @@ ibf_load_local_table(const struct ibf_load *load, ibf_offset_t local_table_offse
 static ibf_offset_t
 ibf_dump_catch_table(struct ibf_dump *dump, const rb_iseq_t *iseq)
 {
-    const struct iseq_catch_table *table = iseq->body->catch_table;
+    const struct iseq_catch_table *table = iseq->body.catch_table;
 
     if (table) {
         int *iseq_indices = ALLOCA_N(int, table->size);
@@ -10589,7 +10589,7 @@ ibf_load_catch_table(const struct ibf_load *load, ibf_offset_t catch_table_offse
 static ibf_offset_t
 ibf_dump_ci_entries(struct ibf_dump *dump, const rb_iseq_t *iseq)
 {
-    const struct rb_iseq_constant_body *const body = iseq->body;
+    const struct rb_iseq_constant_body *const body = &iseq->body;
     const unsigned int ci_size = body->ci_size;
     const struct rb_call_data *cds = body->call_data;
 
@@ -10677,7 +10677,7 @@ ibf_dump_iseq_each(struct ibf_dump *dump, const rb_iseq_t *iseq)
 
     unsigned int *positions;
 
-    const struct rb_iseq_constant_body *body = iseq->body;
+    const struct rb_iseq_constant_body *body = &iseq->body;
 
     const VALUE location_pathobj_index = ibf_dump_object(dump, body->location.pathobj); /* TODO: freeze */
     const VALUE location_base_label_index = ibf_dump_object(dump, body->location.base_label);
@@ -10699,15 +10699,15 @@ ibf_dump_iseq_each(struct ibf_dump *dump, const rb_iseq_t *iseq)
     const ibf_offset_t param_keyword_offset =   ibf_dump_param_keyword(dump, iseq);
     const ibf_offset_t insns_info_body_offset = ibf_dump_insns_info_body(dump, iseq);
 
-    positions = rb_iseq_insns_info_decode_positions(iseq->body);
+    positions = rb_iseq_insns_info_decode_positions(&iseq->body);
     const ibf_offset_t insns_info_positions_offset = ibf_dump_insns_info_positions(dump, positions, body->insns_info.size);
     ruby_xfree(positions);
 
     const ibf_offset_t local_table_offset = ibf_dump_local_table(dump, iseq);
     const unsigned int catch_table_size =   body->catch_table ? body->catch_table->size : 0;
     const ibf_offset_t catch_table_offset = ibf_dump_catch_table(dump, iseq);
-    const int parent_iseq_index =           ibf_dump_iseq(dump, iseq->body->parent_iseq);
-    const int local_iseq_index =            ibf_dump_iseq(dump, iseq->body->local_iseq);
+    const int parent_iseq_index =           ibf_dump_iseq(dump, iseq->body.parent_iseq);
+    const int local_iseq_index =            ibf_dump_iseq(dump, iseq->body.local_iseq);
     const ibf_offset_t ci_entries_offset =  ibf_dump_ci_entries(dump, iseq);
 
 #if IBF_ISEQ_ENABLE_LOCAL_BUFFER
@@ -10814,7 +10814,8 @@ ibf_load_location_str(const struct ibf_load *load, VALUE str_index)
 static void
 ibf_load_iseq_each(struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t offset)
 {
-    struct rb_iseq_constant_body *load_body = iseq->body = rb_iseq_constant_body_alloc();
+    struct rb_iseq_constant_body *load_body = rb_iseq_constant_body_alloc();
+    iseq->body = *load_body;
 
     ibf_offset_t reading_pos = offset;
 
@@ -10910,7 +10911,7 @@ ibf_load_iseq_each(struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t offset)
 
     ISEQ_COVERAGE_SET(iseq, Qnil);
     ISEQ_ORIGINAL_ISEQ_CLEAR(iseq);
-    iseq->body->variable.flip_count = variable_flip_count;
+    iseq->body.variable.flip_count = variable_flip_count;
 
     load_body->location.first_lineno = location_first_lineno;
     load_body->location.node_id = location_node_id;
@@ -11740,8 +11741,8 @@ rb_iseq_ibf_dump(const rb_iseq_t *iseq, VALUE opt)
     VALUE dump_obj;
     VALUE str;
 
-    if (iseq->body->parent_iseq != NULL ||
-        iseq->body->local_iseq != iseq) {
+    if (iseq->body.parent_iseq != NULL ||
+        iseq->body.local_iseq != iseq) {
         rb_raise(rb_eRuntimeError, "should be top of iseq");
     }
     if (RTEST(ISEQ_COVERAGE(iseq))) {

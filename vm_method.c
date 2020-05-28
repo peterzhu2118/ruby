@@ -764,7 +764,7 @@ rb_method_entry_make(VALUE klass, ID mid, VALUE defined_class, rb_method_visibil
 	    }
 	    if (iseq) {
 		rb_compile_warning(RSTRING_PTR(rb_iseq_path(iseq)),
-				   FIX2INT(iseq->body->location.first_lineno),
+				   FIX2INT(iseq->body.location.first_lineno),
 				   "previous definition of %"PRIsVALUE" was here",
 				   rb_id2str(old_def->original_id));
 	    }
@@ -1336,7 +1336,7 @@ scope_visibility_check(void)
 {
     /* Check for public/protected/private/module_function called inside a method */
     rb_control_frame_t *cfp = rb_current_execution_context()->cfp+1;
-    if (cfp && cfp->iseq && cfp->iseq->body->type == ISEQ_TYPE_METHOD) {
+    if (cfp && cfp->iseq && cfp->iseq->body.type == ISEQ_TYPE_METHOD) {
         rb_warn("calling %s without arguments inside a method may not have the intended effect",
             rb_id2name(rb_frame_this_func()));
     }
@@ -2029,10 +2029,10 @@ rb_mod_ruby2_keywords(int argc, VALUE *argv, VALUE module)
         if (module == defined_class || origin_class == defined_class) {
             switch (me->def->type) {
               case VM_METHOD_TYPE_ISEQ:
-                if (me->def->body.iseq.iseqptr->body->param.flags.has_rest &&
-                        !me->def->body.iseq.iseqptr->body->param.flags.has_kw &&
-                        !me->def->body.iseq.iseqptr->body->param.flags.has_kwrest) {
-                    me->def->body.iseq.iseqptr->body->param.flags.ruby2_keywords = 1;
+                if (me->def->body.iseq.iseqptr->body.param.flags.has_rest &&
+                        !me->def->body.iseq.iseqptr->body.param.flags.has_kw &&
+                        !me->def->body.iseq.iseqptr->body.param.flags.has_kwrest) {
+                    me->def->body.iseq.iseqptr->body.param.flags.ruby2_keywords = 1;
                     rb_clear_method_cache(module, name);
                 }
                 else {
@@ -2047,11 +2047,11 @@ rb_mod_ruby2_keywords(int argc, VALUE *argv, VALUE module)
 
                 if (vm_block_handler_type(procval) == block_handler_type_iseq) {
                     const struct rb_captured_block *captured = VM_BH_TO_ISEQ_BLOCK(procval);
-                    const rb_iseq_t *iseq = rb_iseq_check(captured->code.iseq);
-                    if (iseq->body->param.flags.has_rest &&
-                            !iseq->body->param.flags.has_kw &&
-                            !iseq->body->param.flags.has_kwrest) {
-                        iseq->body->param.flags.ruby2_keywords = 1;
+                    rb_iseq_t *iseq = rb_iseq_check(captured->code.iseq);
+                    if (iseq->body.param.flags.has_rest &&
+                            !iseq->body.param.flags.has_kw &&
+                            !iseq->body.param.flags.has_kwrest) {
+                        iseq->body.param.flags.ruby2_keywords = 1;
                         rb_clear_method_cache(module, name);
                     }
                     else {

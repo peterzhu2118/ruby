@@ -51,7 +51,7 @@ mjit_copy_job_handler(void *data)
         return;
     }
 
-    const struct rb_iseq_constant_body *body = job->iseq->body;
+    const struct rb_iseq_constant_body *body = &job->iseq->body;
     if (job->is_entries) {
         memcpy(job->is_entries, body->is_entries, sizeof(union iseq_inline_storage_entry) * body->is_size);
     }
@@ -122,8 +122,8 @@ mjit_update_references(const rb_iseq_t *iseq)
         return;
 
     CRITICAL_SECTION_START(4, "mjit_update_references");
-    if (iseq->body->jit_unit) {
-        iseq->body->jit_unit->iseq = (rb_iseq_t *)rb_gc_location((VALUE)iseq->body->jit_unit->iseq);
+    if (iseq->body.jit_unit) {
+        iseq->body.jit_unit->iseq = (rb_iseq_t *)rb_gc_location((VALUE)iseq->body.jit_unit->iseq);
         // We need to invalidate JIT-ed code for the ISeq because it embeds pointer addresses.
         // To efficiently do that, we use the same thing as TracePoint and thus everything is cancelled for now.
         // See mjit.h and tool/ruby_vm/views/_mjit_compile_insn.erb for how `mjit_call_p` is used.
@@ -131,7 +131,7 @@ mjit_update_references(const rb_iseq_t *iseq)
     }
 
     // Units in stale_units (list of over-speculated and invalidated code) are not referenced from
-    // `iseq->body->jit_unit` anymore (because new one replaces that). So we need to check them too.
+    // `iseq->body.jit_unit` anymore (because new one replaces that). So we need to check them too.
     // TODO: we should be able to reduce the number of units checked here.
     struct rb_mjit_unit *unit = NULL;
     list_for_each(&stale_units.head, unit, unode) {
@@ -154,13 +154,13 @@ mjit_free_iseq(const rb_iseq_t *iseq)
     if (mjit_copy_job.iseq == iseq) {
         mjit_copy_job.iseq = NULL;
     }
-    if (iseq->body->jit_unit) {
+    if (iseq->body.jit_unit) {
         // jit_unit is not freed here because it may be referred by multiple
         // lists of units. `get_from_list` and `mjit_finish` do the job.
-        iseq->body->jit_unit->iseq = NULL;
+        iseq->body.jit_unit->iseq = NULL;
     }
     // Units in stale_units (list of over-speculated and invalidated code) are not referenced from
-    // `iseq->body->jit_unit` anymore (because new one replaces that). So we need to check them too.
+    // `iseq->body.jit_unit` anymore (because new one replaces that). So we need to check them too.
     // TODO: we should be able to reduce the number of units checked here.
     struct rb_mjit_unit *unit = NULL;
     list_for_each(&stale_units.head, unit, unode) {
@@ -270,7 +270,7 @@ finish_conts(void)
 
 // Create unit for `iseq`.
 static void
-create_unit(const rb_iseq_t *iseq)
+create_unit(rb_iseq_t *iseq)
 {
     struct rb_mjit_unit *unit;
 
@@ -280,7 +280,7 @@ create_unit(const rb_iseq_t *iseq)
 
     unit->id = current_unit_num++;
     unit->iseq = (rb_iseq_t *)iseq;
-    iseq->body->jit_unit = unit;
+    iseq->body.jit_unit = unit;
 }
 
 // Set up field `used_code_p` for unit iseqs whose iseq on the stack of ec.
@@ -295,8 +295,8 @@ mark_ec_units(rb_execution_context_t *ec)
         const rb_iseq_t *iseq;
         if (cfp->pc && (iseq = cfp->iseq) != NULL
             && imemo_type((VALUE) iseq) == imemo_iseq
-            && (iseq->body->jit_unit) != NULL) {
-            iseq->body->jit_unit->used_code_p = TRUE;
+            && (iseq->body.jit_unit) != NULL) {
+            iseq->body.jit_unit->used_code_p = TRUE;
         }
 
         if (cfp == ec->cfp)
@@ -348,7 +348,7 @@ unload_units(void)
             if (unit->used_code_p) // We can't unload code on stack.
                 continue;
 
-            if (worst == NULL || worst->iseq->body->total_calls > unit->iseq->body->total_calls) {
+            if (worst == NULL || worst->iseq->body.total_calls > unit->iseq->body.total_calls) {
                 worst = unit;
             }
         }
@@ -356,7 +356,7 @@ unload_units(void)
             break;
 
         // Unload the worst node.
-        verbose(2, "Unloading unit %d (calls=%lu)", worst->id, worst->iseq->body->total_calls);
+        verbose(2, "Unloading unit %d (calls=%lu)", worst->id, worst->iseq->body.total_calls);
         assert(worst->handle != NULL);
         remove_from_list(worst, &active_units);
         free_unit(worst);
@@ -368,22 +368,22 @@ unload_units(void)
 }
 
 static void
-mjit_add_iseq_to_process(const rb_iseq_t *iseq, const struct rb_mjit_compile_info *compile_info)
+mjit_add_iseq_to_process(rb_iseq_t *iseq, const struct rb_mjit_compile_info *compile_info)
 {
     if (!mjit_enabled || pch_status == PCH_FAILED)
         return;
 
     RB_DEBUG_COUNTER_INC(mjit_add_iseq_to_process);
-    iseq->body->jit_func = (mjit_func_t)NOT_READY_JIT_ISEQ_FUNC;
+    iseq->body.jit_func = (mjit_func_t)NOT_READY_JIT_ISEQ_FUNC;
     create_unit(iseq);
-    if (iseq->body->jit_unit == NULL)
+    if (iseq->body.jit_unit == NULL)
         // Failure in creating the unit.
         return;
     if (compile_info != NULL)
-        iseq->body->jit_unit->compile_info = *compile_info;
+        iseq->body.jit_unit->compile_info = *compile_info;
 
     CRITICAL_SECTION_START(3, "in add_iseq_to_process");
-    add_to_list(iseq->body->jit_unit, &unit_queue);
+    add_to_list(iseq->body.jit_unit, &unit_queue);
     if (active_units.length >= mjit_opts.max_cache_size) {
         if (in_compact) {
             verbose(1, "Too many JIT code, but skipped unloading units for JIT compaction");
@@ -455,24 +455,24 @@ rb_mjit_iseq_compile_info(const struct rb_iseq_constant_body *body)
     return &body->jit_unit->compile_info;
 }
 
-static void
-mjit_recompile(const rb_iseq_t *iseq)
+void
+mjit_recompile(rb_iseq_t *iseq)
 {
-    if ((uintptr_t)iseq->body->jit_func <= (uintptr_t)LAST_JIT_ISEQ_FUNC)
+    if ((uintptr_t)iseq->body.jit_func <= (uintptr_t)LAST_JIT_ISEQ_FUNC)
         return;
 
-    verbose(1, "JIT recompile: %s@%s:%d", RSTRING_PTR(iseq->body->location.label),
-            RSTRING_PTR(rb_iseq_path(iseq)), FIX2INT(iseq->body->location.first_lineno));
+    verbose(1, "JIT recompile: %s@%s:%d", RSTRING_PTR(iseq->body.location.label),
+            RSTRING_PTR(rb_iseq_path(iseq)), FIX2INT(iseq->body.location.first_lineno));
 
     CRITICAL_SECTION_START(3, "in rb_mjit_recompile_iseq");
-    remove_from_list(iseq->body->jit_unit, &active_units);
-    iseq->body->jit_func = (mjit_func_t)NOT_ADDED_JIT_ISEQ_FUNC;
-    add_to_list(iseq->body->jit_unit, &stale_units);
+    remove_from_list(iseq->body.jit_unit, &active_units);
+    iseq->body.jit_func = (mjit_func_t)NOT_ADDED_JIT_ISEQ_FUNC;
+    add_to_list(iseq->body.jit_unit, &stale_units);
     CRITICAL_SECTION_FINISH(3, "in rb_mjit_recompile_iseq");
 
-    mjit_add_iseq_to_process(iseq, &iseq->body->jit_unit->compile_info);
+    mjit_add_iseq_to_process(iseq, &iseq->body.jit_unit->compile_info);
     if (UNLIKELY(mjit_opts.wait)) {
-        mjit_wait(iseq->body);
+        mjit_wait(&iseq->body);
     }
 }
 
@@ -480,7 +480,7 @@ mjit_recompile(const rb_iseq_t *iseq)
 void
 rb_mjit_recompile_send(const rb_iseq_t *iseq)
 {
-    rb_mjit_iseq_compile_info(iseq->body)->disable_send_cache = true;
+    rb_mjit_iseq_compile_info(&iseq->body)->disable_send_cache = true;
     mjit_recompile(iseq);
 }
 
@@ -488,7 +488,7 @@ rb_mjit_recompile_send(const rb_iseq_t *iseq)
 void
 rb_mjit_recompile_ivar(const rb_iseq_t *iseq)
 {
-    rb_mjit_iseq_compile_info(iseq->body)->disable_ivar_cache = true;
+    rb_mjit_iseq_compile_info(&iseq->body)->disable_ivar_cache = true;
     mjit_recompile(iseq);
 }
 
@@ -496,7 +496,7 @@ rb_mjit_recompile_ivar(const rb_iseq_t *iseq)
 void
 rb_mjit_recompile_exivar(const rb_iseq_t *iseq)
 {
-    rb_mjit_iseq_compile_info(iseq->body)->disable_exivar_cache = true;
+    rb_mjit_iseq_compile_info(&iseq->body)->disable_exivar_cache = true;
     mjit_recompile(iseq);
 }
 
@@ -504,7 +504,7 @@ rb_mjit_recompile_exivar(const rb_iseq_t *iseq)
 void
 rb_mjit_recompile_inlining(const rb_iseq_t *iseq)
 {
-    rb_mjit_iseq_compile_info(iseq->body)->disable_inlining = true;
+    rb_mjit_iseq_compile_info(&iseq->body)->disable_inlining = true;
     mjit_recompile(iseq);
 }
 
@@ -969,8 +969,8 @@ mjit_dump_total_calls(void)
     fprintf(stderr, "[MJIT_COUNTER] total_calls of active_units:\n");
     list_for_each(&active_units.head, unit, unode) {
         const rb_iseq_t *iseq = unit->iseq;
-        fprintf(stderr, "%8ld: %s@%s:%d\n", iseq->body->total_calls, RSTRING_PTR(iseq->body->location.label),
-                RSTRING_PTR(rb_iseq_path(iseq)), FIX2INT(iseq->body->location.first_lineno));
+        fprintf(stderr, "%8ld: %s@%s:%d\n", iseq->body.total_calls, RSTRING_PTR(iseq->body.location.label),
+                RSTRING_PTR(rb_iseq_path(iseq)), FIX2INT(iseq->body.location.first_lineno));
     }
 }
 #endif

@@ -156,7 +156,7 @@ mjit_exec(rb_execution_context_t *ec)
     RB_DEBUG_COUNTER_INC(mjit_exec);
 
     iseq = ec->cfp->iseq;
-    body = iseq->body;
+    body = &iseq->body;
     body->total_calls++;
 
     mjit_func_t func = body->jit_func;

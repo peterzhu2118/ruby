@@ -34,18 +34,18 @@ calc_lineno(const rb_iseq_t *iseq, const VALUE *pc)
 {
     VM_ASSERT(iseq);
     VM_ASSERT(iseq->body);
-    VM_ASSERT(iseq->body->iseq_encoded);
-    VM_ASSERT(iseq->body->iseq_size);
+    VM_ASSERT(iseq->body.iseq_encoded);
+    VM_ASSERT(iseq->body.iseq_size);
     if (! pc) {
         /* This can happen during VM bootup. */
-        VM_ASSERT(iseq->body->type == ISEQ_TYPE_TOP);
-        VM_ASSERT(! iseq->body->local_table);
-        VM_ASSERT(! iseq->body->local_table_size);
+        VM_ASSERT(iseq->body.type == ISEQ_TYPE_TOP);
+        VM_ASSERT(! iseq->body.local_table);
+        VM_ASSERT(! iseq->body.local_table_size);
         return 0;
     }
     else {
-        ptrdiff_t n = pc - iseq->body->iseq_encoded;
-        VM_ASSERT(n <= iseq->body->iseq_size);
+        ptrdiff_t n = pc - iseq->body.iseq_encoded;
+        VM_ASSERT(n <= iseq->body.iseq_size);
         VM_ASSERT(n >= 0);
         ASSUME(n >= 0);
         size_t pos = n; /* no overflow */
@@ -193,7 +193,7 @@ location_label(rb_backtrace_location_t *loc)
     switch (loc->type) {
       case LOCATION_TYPE_ISEQ:
       case LOCATION_TYPE_ISEQ_CALCED:
-	return loc->body.iseq.iseq->body->location.label;
+	return loc->body.iseq.iseq->body.location.label;
       case LOCATION_TYPE_CFUNC:
 	return rb_id2str(loc->body.cfunc.mid);
       case LOCATION_TYPE_IFUNC:
@@ -242,7 +242,7 @@ location_base_label(rb_backtrace_location_t *loc)
     switch (loc->type) {
       case LOCATION_TYPE_ISEQ:
       case LOCATION_TYPE_ISEQ_CALCED:
-	return loc->body.iseq.iseq->body->location.base_label;
+	return loc->body.iseq.iseq->body.location.base_label;
       case LOCATION_TYPE_CFUNC:
 	return rb_id2str(loc->body.cfunc.mid);
       case LOCATION_TYPE_IFUNC:
@@ -352,7 +352,7 @@ location_to_str(rb_backtrace_location_t *loc)
     switch (loc->type) {
       case LOCATION_TYPE_ISEQ:
 	file = rb_iseq_path(loc->body.iseq.iseq);
-	name = loc->body.iseq.iseq->body->location.label;
+	name = loc->body.iseq.iseq->body.location.label;
 
 	lineno = loc->body.iseq.lineno.lineno = calc_lineno(loc->body.iseq.iseq, loc->body.iseq.lineno.pc);
 	loc->type = LOCATION_TYPE_ISEQ_CALCED;
@@ -360,7 +360,7 @@ location_to_str(rb_backtrace_location_t *loc)
       case LOCATION_TYPE_ISEQ_CALCED:
 	file = rb_iseq_path(loc->body.iseq.iseq);
 	lineno = loc->body.iseq.lineno.lineno;
-	name = loc->body.iseq.iseq->body->location.label;
+	name = loc->body.iseq.iseq->body.location.label;
 	break;
       case LOCATION_TYPE_CFUNC:
 	if (loc->body.cfunc.prev_loc) {
@@ -671,7 +671,7 @@ rb_backtrace_use_iseq_first_lineno_for_last_location(VALUE self)
 
     VM_ASSERT(loc->type == LOCATION_TYPE_ISEQ);
 
-    loc->body.iseq.lineno.lineno = FIX2INT(iseq->body->location.first_lineno);
+    loc->body.iseq.lineno.lineno = FIX2INT(iseq->body.location.first_lineno);
     loc->type = LOCATION_TYPE_ISEQ_CALCED;
 }
 
@@ -774,7 +774,7 @@ oldbt_iter_iseq(void *ptr, const rb_control_frame_t *cfp)
     const VALUE *pc = cfp->pc;
     struct oldbt_arg *arg = (struct oldbt_arg *)ptr;
     VALUE file = arg->filename = rb_iseq_path(iseq);
-    VALUE name = iseq->body->location.label;
+    VALUE name = iseq->body.location.label;
     int lineno = arg->lineno = calc_lineno(iseq, pc);
 
     (arg->func)(arg->data, file, lineno, name);

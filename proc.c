@@ -428,11 +428,11 @@ get_local_variable_ptr(const rb_env_t **envp, ID lid)
 
 	    VM_ASSERT(rb_obj_is_iseq((VALUE)iseq));
 
-	    for (i=0; i<iseq->body->local_table_size; i++) {
-		if (iseq->body->local_table[i] == lid) {
-		    if (iseq->body->local_iseq == iseq &&
-			iseq->body->param.flags.has_block &&
-			(unsigned int)iseq->body->param.block_start == i) {
+	    for (i=0; i<iseq->body.local_table_size; i++) {
+		if (iseq->body.local_table[i] == lid) {
+		    if (iseq->body.local_iseq == iseq &&
+			iseq->body.param.flags.has_block &&
+			(unsigned int)iseq->body.param.block_start == i) {
 			const VALUE *ep = env->ep;
 			if (!VM_ENV_FLAGS(ep, VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM)) {
 			    RB_OBJ_WRITE(env, &env->env[i], rb_vm_bh_to_procval(GET_EC(), VM_ENV_BLOCK_HANDLER(ep)));
@@ -1054,11 +1054,11 @@ proc_arity(VALUE self)
 static inline int
 rb_iseq_min_max_arity(const rb_iseq_t *iseq, int *max)
 {
-    *max = iseq->body->param.flags.has_rest == FALSE ?
-      iseq->body->param.lead_num + iseq->body->param.opt_num + iseq->body->param.post_num +
-      (iseq->body->param.flags.has_kw == TRUE || iseq->body->param.flags.has_kwrest == TRUE)
+    *max = iseq->body.param.flags.has_rest == FALSE ?
+      iseq->body.param.lead_num + iseq->body.param.opt_num + iseq->body.param.post_num +
+      (iseq->body.param.flags.has_kw == TRUE || iseq->body.param.flags.has_kwrest == TRUE)
       : UNLIMITED_ARGUMENTS;
-    return iseq->body->param.lead_num + iseq->body->param.post_num + (iseq->body->param.flags.has_kw && iseq->body->param.keyword->required_num > 0);
+    return iseq->body.param.lead_num + iseq->body.param.post_num + (iseq->body.param.flags.has_kw && iseq->body.param.keyword->required_num > 0);
 }
 
 static int
@@ -1262,7 +1262,7 @@ iseq_location(const rb_iseq_t *iseq)
     if (!iseq) return Qnil;
     rb_iseq_check(iseq);
     loc[0] = rb_iseq_path(iseq);
-    loc[1] = iseq->body->location.first_lineno;
+    loc[1] = iseq->body.location.first_lineno;
 
     return rb_ary_new4(2, loc);
 }
@@ -1401,7 +1401,7 @@ rb_block_to_s(VALUE self, const struct rb_block *block, const char *additional_i
 	    const rb_iseq_t *iseq = rb_iseq_check(block->as.captured.code.iseq);
             rb_str_catf(str, "%p %"PRIsVALUE":%d", (void *)self,
 			rb_iseq_path(iseq),
-			FIX2INT(iseq->body->location.first_lineno));
+			FIX2INT(iseq->body.location.first_lineno));
 	}
 	break;
       case block_type_symbol:
@@ -3199,7 +3199,7 @@ proc_binding(VALUE self)
 
     if (iseq) {
 	rb_iseq_check(iseq);
-	RB_OBJ_WRITE(bindval, &bind->pathobj, iseq->body->location.pathobj);
+	RB_OBJ_WRITE(bindval, &bind->pathobj, iseq->body.location.pathobj);
 	bind->first_lineno = FIX2INT(rb_iseq_first_lineno(iseq));
     }
     else {
@@ -3581,10 +3581,10 @@ proc_ruby2_keywords(VALUE procval)
 
     switch (proc->block.type) {
       case block_type_iseq:
-        if (proc->block.as.captured.code.iseq->body->param.flags.has_rest &&
-                !proc->block.as.captured.code.iseq->body->param.flags.has_kw &&
-                !proc->block.as.captured.code.iseq->body->param.flags.has_kwrest) {
-            proc->block.as.captured.code.iseq->body->param.flags.ruby2_keywords = 1;
+        if (proc->block.as.captured.code.iseq->body.param.flags.has_rest &&
+                !proc->block.as.captured.code.iseq->body.param.flags.has_kw &&
+                !proc->block.as.captured.code.iseq->body.param.flags.has_kwrest) {
+            proc->block.as.captured.code.iseq->body.param.flags.ruby2_keywords = 1;
         }
         else {
             rb_warn("Skipping set of ruby2_keywords flag for proc (proc accepts keywords or proc does not accept argument splat)");
