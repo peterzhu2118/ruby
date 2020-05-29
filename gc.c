@@ -1857,8 +1857,6 @@ heap_page_create(rb_objspace_t *objspace)
     if (page == NULL) {
 	page = heap_page_allocate(objspace);
 	method = "allocate";
-    } else {
-        printf("RESURRECT\n");
     }
     if (0) fprintf(stderr, "heap_page_create: %s - %p, heap_allocated_pages: %d, heap_allocated_pages: %d, tomb->total_pages: %d\n",
 		   method, (void *)page, (int)heap_pages_sorted_length, (int)heap_allocated_pages, (int)heap_tomb->total_pages);

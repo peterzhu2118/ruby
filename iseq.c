@@ -452,20 +452,17 @@ rb_iseq_memsize(const rb_iseq_t *iseq)
 
 static uintptr_t fresh_iseq_unique_id = 0; /* -- Remove In 3.0 -- */
 
-struct rb_iseq_constant_body *
-rb_iseq_constant_body_alloc(void)
+void
+rb_iseq_constant_body_init(struct rb_iseq_constant_body *iseq_body)
 {
-    struct rb_iseq_constant_body *iseq_body;
-    iseq_body = ZALLOC(struct rb_iseq_constant_body);
     iseq_body->iseq_unique_id = fresh_iseq_unique_id++; /* -- Remove In 3.0 -- */
-    return iseq_body;
 }
 
 static rb_iseq_t *
 iseq_alloc(void)
 {
     rb_iseq_t *iseq = iseq_imemo_alloc();
-    iseq->body = *rb_iseq_constant_body_alloc();
+    rb_iseq_constant_body_init(&iseq->body);
     return iseq;
 }
 

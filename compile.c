@@ -10814,8 +10814,8 @@ ibf_load_location_str(const struct ibf_load *load, VALUE str_index)
 static void
 ibf_load_iseq_each(struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t offset)
 {
-    struct rb_iseq_constant_body *load_body = rb_iseq_constant_body_alloc();
-    iseq->body = *load_body;
+    struct rb_iseq_constant_body *load_body = &iseq->body;
+    rb_iseq_constant_body_init(load_body);
 
     ibf_offset_t reading_pos = offset;
 
