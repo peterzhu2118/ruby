@@ -132,6 +132,7 @@ VALUE rb_imemo_new(enum imemo_type type, VALUE v1, VALUE v2, VALUE v3, VALUE v0)
 rb_imemo_tmpbuf_t *rb_imemo_tmpbuf_parser_heap(void *buf, rb_imemo_tmpbuf_t *old_heap, size_t cnt);
 struct vm_ifunc *rb_vm_ifunc_new(rb_block_call_func_t func, const void *data, int min_argc, int max_argc);
 void rb_strterm_mark(VALUE obj);
+static inline enum imemo_type flag_imemo_type(unsigned long flags);
 static inline enum imemo_type imemo_type(VALUE imemo);
 static inline int imemo_type_p(VALUE imemo, enum imemo_type imemo_type);
 static inline bool imemo_throw_data_p(VALUE imemo);
@@ -153,9 +154,15 @@ VALUE rb_imemo_new(enum imemo_type type, VALUE v1, VALUE v2, VALUE v3, VALUE v0)
 RUBY_SYMBOL_EXPORT_END
 
 static inline enum imemo_type
+flag_imemo_type(unsigned long flags)
+{
+    return (flags >> FL_USHIFT) & IMEMO_MASK;
+}
+
+static inline enum imemo_type
 imemo_type(VALUE imemo)
 {
-    return (RBASIC(imemo)->flags >> FL_USHIFT) & IMEMO_MASK;
+    return flag_imemo_type(RBASIC(imemo)->flags);
 }
 
 static inline int
