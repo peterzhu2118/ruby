@@ -894,6 +894,12 @@ VALUE *ruby_initial_gc_stress_ptr = &ruby_initial_gc_stress;
 #define heap_pages_freeable_pages container->heap_pages.freeable_pages
 #define heap_pages_final_slots    container->heap_pages.final_slots
 #define heap_pages_deferred_final container->heap_pages.deferred_final
+
+#define rvalue_heap_allocated_pages      rvalue_heap_container->heap_pages.allocated_pages
+#define rvalue_heap_pages_sorted_length  rvalue_heap_container->heap_pages.sorted_length
+#define rvalue_heap_allocatable_pages	  rvalue_heap_container->heap_pages.allocatable_pages
+#define rvalue_heap_pages_final_slots    rvalue_heap_container->heap_pages.final_slots
+
 #define heap_eden                (&container->eden)
 #define heap_tomb                (&container->tomb)
 #define rvalue_heap_container    (&objspace->rvalue_heap)
@@ -2094,28 +2100,19 @@ gc_event_hook_body(rb_execution_context_t *ec, rb_objspace_t *objspace, const rb
 } while (0)
 
 static inline VALUE
-newobj_init(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected, rb_objspace_t *objspace, VALUE obj)
+newobj_init_blank(VALUE klass, VALUE flags, int wb_protected, rb_objspace_t *objspace, size_t size, VALUE obj)
 {
 #if !__has_feature(memory_sanitizer)
     GC_ASSERT(BUILTIN_TYPE(obj) == T_NONE);
     GC_ASSERT((flags & FL_WB_PROTECTED) == 0);
 #endif
 
-    /* OBJSETUP */
-    struct RVALUE buf = {
-        .as = {
-            .values =  {
-                .basic = {
-                    .flags = flags,
-                    .klass = klass,
-                },
-                .v1 = v1,
-                .v2 = v2,
-                .v3 = v3,
-            },
-        },
+    memset((void *)obj, 0, size);
+    struct RBasic basic = {
+        .flags = flags,
+        .klass = klass
     };
-    MEMCPY(RANY(obj), &buf, RVALUE, 1);
+    MEMCPY((void*)obj, &basic, struct RBasic, 1);
 
 #if RGENGC_CHECK_MODE
     GC_ASSERT(RVALUE_MARKED(obj) == FALSE);
@@ -2183,49 +2180,21 @@ newobj_init(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_prote
 }
 
 static inline VALUE
-newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_container_t *container, int wb_protected)
+rvalue_newobj_init(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected, rb_objspace_t *objspace, VALUE obj)
 {
-    VALUE obj;
+    newobj_init_blank(klass, flags, wb_protected, objspace, sizeof(RVALUE), obj);
 
-    if (UNLIKELY(during_gc || ruby_gc_stressful)) {
-	if (during_gc) {
-	    dont_gc = 1;
-	    during_gc = 0;
-	    rb_bug("object allocation during garbage collection phase");
-	}
+    RVALUE *value = RANY(obj);
+    value->as.values.v1 = v1;
+    value->as.values.v2 = v2;
+    value->as.values.v3 = v3;
 
-	if (ruby_gc_stressful) {
-            if (!garbage_collect_container(objspace, container, GPR_FLAG_NEWOBJ)) {
-		rb_memerror();
-            }
-	}
-    }
-
-    obj = heap_get_freeobj(objspace, container, heap_eden);
-    newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
-    gc_event_hook(objspace, RUBY_INTERNAL_EVENT_NEWOBJ, obj);
     return obj;
 }
 
-NOINLINE(static VALUE newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_container_t *container));
-NOINLINE(static VALUE newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_container_t *container));
-
-static VALUE
-newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_container_t *container)
-{
-    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, container, TRUE);
-}
-
-static VALUE
-newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_heap_container_t *container)
-{
-    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, container, FALSE);
-}
-
 static inline VALUE
-newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected)
+newobj_allocate(rb_objspace_t *objspace, rb_heap_container_t *container, int wb_protected)
 {
-    rb_objspace_t *objspace = &rb_objspace;
     VALUE obj;
 
     RB_DEBUG_COUNTER_INC(obj_newobj);
@@ -2239,35 +2208,67 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protect
         }
     }
 #endif
-    rb_heap_container_t *container = rvalue_heap_container;
 
     if (!(during_gc ||
-	  ruby_gc_stressful ||
-	  gc_event_hook_available_p(objspace)) &&
-	(obj = heap_get_freeobj_head(objspace, heap_eden)) != Qfalse) {
-	return newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
-    }
-    else {
+            ruby_gc_stressful ||
+            gc_event_hook_available_p(objspace)) &&
+            (obj = heap_get_freeobj_head(objspace, heap_eden)) != Qfalse) {
+        return obj;
+    } else {
         RB_DEBUG_COUNTER_INC(obj_newobj_slowpath);
 
-        return wb_protected ?
-            newobj_slowpath_wb_protected(klass, flags, v1, v2, v3, objspace, container) :
-            newobj_slowpath_wb_unprotected(klass, flags, v1, v2, v3, objspace, container);
+        if (UNLIKELY(during_gc || ruby_gc_stressful)) {
+            if (during_gc) {
+                dont_gc = 1;
+                during_gc = 0;
+                rb_bug("object allocation during garbage collection phase");
+            }
+
+            if (ruby_gc_stressful) {
+                if (!garbage_collect_container(objspace, container, GPR_FLAG_NEWOBJ)) {
+                    rb_memerror();
+                }
+            }
+        }
+
+        return heap_get_freeobj(objspace, container, heap_eden);
     }
+}
+
+static inline VALUE
+blank_newobj_of(VALUE klass, VALUE flags, size_t size, int wb_protected)
+{
+    rb_objspace_t *objspace = &rb_objspace;
+
+    VALUE obj = newobj_allocate(objspace, rvalue_heap_container, wb_protected);
+    newobj_init_blank(klass, flags, wb_protected, objspace, size, obj);
+    gc_event_hook(objspace, RUBY_INTERNAL_EVENT_NEWOBJ, obj);
+    return obj;
+}
+
+static inline VALUE
+rvalue_newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected)
+{
+    rb_objspace_t *objspace = &rb_objspace;
+
+    VALUE obj = newobj_allocate(objspace, rvalue_heap_container, wb_protected);
+	rvalue_newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
+    gc_event_hook(objspace, RUBY_INTERNAL_EVENT_NEWOBJ, obj);
+    return obj;
 }
 
 VALUE
 rb_wb_unprotected_newobj_of(VALUE klass, VALUE flags)
 {
     GC_ASSERT((flags & FL_WB_PROTECTED) == 0);
-    return newobj_of(klass, flags, 0, 0, 0, FALSE);
+    return blank_newobj_of(klass, flags, sizeof(RVALUE), FALSE);
 }
 
 VALUE
 rb_wb_protected_newobj_of(VALUE klass, VALUE flags)
 {
     GC_ASSERT((flags & FL_WB_PROTECTED) == 0);
-    return newobj_of(klass, flags, 0, 0, 0, TRUE);
+    return blank_newobj_of(klass, flags, sizeof(RVALUE), TRUE);
 }
 
 /* for compatibility */
@@ -2275,13 +2276,13 @@ rb_wb_protected_newobj_of(VALUE klass, VALUE flags)
 VALUE
 rb_newobj(void)
 {
-    return newobj_of(0, T_NONE, 0, 0, 0, FALSE);
+    return blank_newobj_of(0, T_NONE, sizeof(RVALUE), FALSE);
 }
 
 VALUE
 rb_newobj_of(VALUE klass, VALUE flags)
 {
-    return newobj_of(klass, flags & ~FL_WB_PROTECTED, 0, 0, 0, flags & FL_WB_PROTECTED);
+    return blank_newobj_of(klass, flags & ~FL_WB_PROTECTED, sizeof(RVALUE), flags & FL_WB_PROTECTED);
 }
 
 #define UNEXPECTED_NODE(func) \
@@ -2294,14 +2295,14 @@ VALUE
 rb_imemo_new(enum imemo_type type, VALUE v1, VALUE v2, VALUE v3, VALUE v0)
 {
     VALUE flags = T_IMEMO | (type << FL_USHIFT);
-    return newobj_of(v0, flags, v1, v2, v3, TRUE);
+    return rvalue_newobj_of(v0, flags, v1, v2, v3, TRUE);
 }
 
 static VALUE
 rb_imemo_tmpbuf_new(VALUE v1, VALUE v2, VALUE v3, VALUE v0)
 {
     VALUE flags = T_IMEMO | (imemo_tmpbuf << FL_USHIFT);
-    return newobj_of(v0, flags, v1, v2, v3, FALSE);
+    return rvalue_newobj_of(v0, flags, v1, v2, v3, FALSE);
 }
 
 static VALUE
@@ -2365,7 +2366,7 @@ rb_data_object_wrap(VALUE klass, void *datap, RUBY_DATA_FUNC dmark, RUBY_DATA_FU
 {
     RUBY_ASSERT_ALWAYS(dfree != (RUBY_DATA_FUNC)1);
     if (klass) Check_Type(klass, T_CLASS);
-    return newobj_of(klass, T_DATA, (VALUE)dmark, (VALUE)dfree, (VALUE)datap, FALSE);
+    return rvalue_newobj_of(klass, T_DATA, (VALUE)dmark, (VALUE)dfree, (VALUE)datap, FALSE);
 }
 
 VALUE
@@ -2381,7 +2382,7 @@ rb_data_typed_object_wrap(VALUE klass, void *datap, const rb_data_type_t *type)
 {
     RUBY_ASSERT_ALWAYS(type);
     if (klass) Check_Type(klass, T_CLASS);
-    return newobj_of(klass, T_DATA, (VALUE)type, (VALUE)1, (VALUE)datap, type->flags & RUBY_FL_WB_PROTECTED);
+    return rvalue_newobj_of(klass, T_DATA, (VALUE)type, (VALUE)1, (VALUE)datap, type->flags & RUBY_FL_WB_PROTECTED);
 }
 
 VALUE
