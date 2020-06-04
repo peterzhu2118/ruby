@@ -8982,16 +8982,16 @@ gc_latest_gc_info(rb_execution_context_t *ec, VALUE self, VALUE arg)
 
 enum gc_stat_sym {
     gc_stat_sym_count,
-    gc_stat_sym_rvalue_heap_allocated_pages,
-    gc_stat_sym_rvalue_heap_sorted_length,
-    gc_stat_sym_rvalue_heap_allocatable_pages,
-    gc_stat_sym_rvalue_heap_available_slots,
-    gc_stat_sym_rvalue_heap_live_slots,
-    gc_stat_sym_rvalue_heap_free_slots,
-    gc_stat_sym_rvalue_heap_final_slots,
-    gc_stat_sym_rvalue_heap_marked_slots,
-    gc_stat_sym_rvalue_heap_eden_pages,
-    gc_stat_sym_rvalue_heap_tomb_pages,
+    gc_stat_sym_heap_allocated_pages,
+    gc_stat_sym_heap_sorted_length,
+    gc_stat_sym_heap_allocatable_pages,
+    gc_stat_sym_heap_available_slots,
+    gc_stat_sym_heap_live_slots,
+    gc_stat_sym_heap_free_slots,
+    gc_stat_sym_heap_final_slots,
+    gc_stat_sym_heap_marked_slots,
+    gc_stat_sym_heap_eden_pages,
+    gc_stat_sym_heap_tomb_pages,
     gc_stat_sym_total_allocated_pages,
     gc_stat_sym_total_freed_pages,
     gc_stat_sym_total_allocated_objects,
@@ -9055,16 +9055,16 @@ setup_gc_stat_symbols(void)
     if (gc_stat_symbols[0] == 0) {
 #define S(s) gc_stat_symbols[gc_stat_sym_##s] = ID2SYM(rb_intern_const(#s))
 	S(count);
-	S(rvalue_heap_allocated_pages);
-	S(rvalue_heap_sorted_length);
-	S(rvalue_heap_allocatable_pages);
-	S(rvalue_heap_available_slots);
-	S(rvalue_heap_live_slots);
-	S(rvalue_heap_free_slots);
-	S(rvalue_heap_final_slots);
-	S(rvalue_heap_marked_slots);
-	S(rvalue_heap_eden_pages);
-	S(rvalue_heap_tomb_pages);
+	S(heap_allocated_pages);
+	S(heap_sorted_length);
+	S(heap_allocatable_pages);
+	S(heap_available_slots);
+	S(heap_live_slots);
+	S(heap_free_slots);
+	S(heap_final_slots);
+	S(heap_marked_slots);
+	S(heap_eden_pages);
+	S(heap_tomb_pages);
 	S(total_allocated_pages);
 	S(total_freed_pages);
 	S(total_allocated_objects);
@@ -9123,14 +9123,14 @@ setup_gc_stat_symbols(void)
 	    /* compatibility layer for Ruby 2.1 */
 #define OLD_SYM(s) gc_stat_compat_symbols[gc_stat_compat_sym_##s]
 #define NEW_SYM(s) gc_stat_symbols[gc_stat_sym_##s]
-	    rb_hash_aset(table, OLD_SYM(gc_stat_heap_used), NEW_SYM(rvalue_heap_allocated_pages));
-	    rb_hash_aset(table, OLD_SYM(heap_eden_page_length), NEW_SYM(rvalue_heap_eden_pages));
-	    rb_hash_aset(table, OLD_SYM(heap_tomb_page_length), NEW_SYM(rvalue_heap_tomb_pages));
-	    rb_hash_aset(table, OLD_SYM(heap_increment), NEW_SYM(rvalue_heap_allocatable_pages));
-	    rb_hash_aset(table, OLD_SYM(heap_length), NEW_SYM(rvalue_heap_sorted_length));
-	    rb_hash_aset(table, OLD_SYM(heap_live_slot), NEW_SYM(rvalue_heap_live_slots));
-	    rb_hash_aset(table, OLD_SYM(heap_free_slot), NEW_SYM(rvalue_heap_free_slots));
-	    rb_hash_aset(table, OLD_SYM(heap_final_slot), NEW_SYM(rvalue_heap_final_slots));
+	    rb_hash_aset(table, OLD_SYM(gc_stat_heap_used), NEW_SYM(heap_allocated_pages));
+	    rb_hash_aset(table, OLD_SYM(heap_eden_page_length), NEW_SYM(heap_eden_pages));
+	    rb_hash_aset(table, OLD_SYM(heap_tomb_page_length), NEW_SYM(heap_tomb_pages));
+	    rb_hash_aset(table, OLD_SYM(heap_increment), NEW_SYM(heap_allocatable_pages));
+	    rb_hash_aset(table, OLD_SYM(heap_length), NEW_SYM(heap_sorted_length));
+	    rb_hash_aset(table, OLD_SYM(heap_live_slot), NEW_SYM(heap_live_slots));
+	    rb_hash_aset(table, OLD_SYM(heap_free_slot), NEW_SYM(heap_free_slots));
+	    rb_hash_aset(table, OLD_SYM(heap_final_slot), NEW_SYM(heap_final_slots));
 	    rb_hash_aset(table, OLD_SYM(remembered_shady_object), NEW_SYM(remembered_wb_unprotected_objects));
 	    rb_hash_aset(table, OLD_SYM(remembered_shady_object_limit), NEW_SYM(remembered_wb_unprotected_objects_limit));
 	    rb_hash_aset(table, OLD_SYM(old_object), NEW_SYM(old_objects));
@@ -9218,22 +9218,26 @@ gc_stat_internal(VALUE hash_or_sym)
     else if (hash != Qnil) \
 	rb_hash_aset(hash, gc_stat_symbols[gc_stat_sym_##name], SIZET2NUM(attr));
 
+#define CONTAINER_STAT(stat) \
+    rvalue_##stat
+
   again:
     SET(count, objspace->profile.count);
 
     /* implementation dependent counters */
     rb_heap_container_t *container;
     container = rvalue_heap_container;
-    SET(rvalue_heap_allocated_pages, heap_allocated_pages);
-    SET(rvalue_heap_sorted_length, heap_pages_sorted_length);
-    SET(rvalue_heap_allocatable_pages, heap_allocatable_pages);
-    SET(rvalue_heap_available_slots, objspace_available_slots(objspace));
-    SET(rvalue_heap_live_slots, objspace_live_slots(objspace));
-    SET(rvalue_heap_free_slots, objspace_free_slots(objspace));
-    SET(rvalue_heap_final_slots, heap_pages_final_slots);
-    SET(rvalue_heap_marked_slots, objspace->marked_slots);
-    SET(rvalue_heap_eden_pages, heap_eden->total_pages);
-    SET(rvalue_heap_tomb_pages, heap_tomb->total_pages);
+    SET(heap_allocated_pages, CONTAINER_STAT(heap_allocated_pages));
+    SET(heap_sorted_length, CONTAINER_STAT(heap_pages_sorted_length));
+    SET(heap_allocatable_pages, CONTAINER_STAT(heap_allocatable_pages));
+    SET(heap_available_slots, objspace_available_slots(objspace));
+    SET(heap_live_slots, objspace_live_slots(objspace));
+    SET(heap_free_slots, objspace_free_slots(objspace));
+    SET(heap_final_slots, CONTAINER_STAT(heap_pages_final_slots));
+    SET(heap_marked_slots, objspace->marked_slots);
+    SET(heap_eden_pages, CONTAINER_STAT(heap_eden->total_pages));
+    SET(heap_tomb_pages, CONTAINER_STAT(heap_tomb->total_pages));
+#undef CONTAINER_STAT
 
     SET(total_allocated_pages, objspace->profile.total_allocated_pages);
     SET(total_freed_pages, objspace->profile.total_freed_pages);
