@@ -125,9 +125,11 @@ rbimpl_rstring_getmem(VALUE str)
     RBIMPL_ASSERT_TYPE(str, RUBY_T_STRING);
 
     if (RB_FL_ANY_RAW(str, RSTRING_NOEMBED)) {
+        // printf("IF\n");
         return *RSTRING(str);
     }
     else {
+        // printf("ELSE\n");
         /* Expecting compilers to optimize this on-stack struct away. */
         struct RString retval;
         retval.as.heap.len = RSTRING_EMBED_LEN(str);
@@ -153,6 +155,12 @@ RSTRING_PTR(VALUE str)
     char *ptr = rbimpl_rstring_getmem(str).as.heap.ptr;
 
     if (RB_UNLIKELY(! ptr)) {
+        // printf("IS STRING? %d", )
+        // unsigned char *p = (char *)str;
+        // for (int i=0; i<40; i++) {
+        //     printf("%02hhX ", p[i]);
+        // }
+        // printf("\n");
         /* :BEWARE: @shyouhei thinks  that currently, there are  rooms for this
          * function to return  NULL.  In the 20th century that  was a pointless
          * concern.  However struct RString can hold fake strings nowadays.  It
