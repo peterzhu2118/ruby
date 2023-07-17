@@ -8764,14 +8764,14 @@ gc_writebarrier_generational(VALUE a, VALUE b, rb_objspace_t *objspace)
         if (is_incremental_marking(objspace)) rb_bug("gc_writebarrier_generational: called while incremental marking: %s -> %s", obj_info(a), obj_info(b));
     }
 
-    /* mark `a' and remember (default behavior) */
-    if (!rgengc_remembered(objspace, a)) {
-        RB_VM_LOCK_ENTER_NO_BARRIER();
-        {
-            rgengc_remember(objspace, a);
-        }
-        RB_VM_LOCK_LEAVE_NO_BARRIER();
-        gc_report(1, objspace, "gc_writebarrier_generational: %s (remembered) -> %s\n", obj_info(a), obj_info(b));
+    MARK_IN_BITMAP(GET_HEAP_MARK_BITS(b), b);
+    if (RVALUE_WB_UNPROTECTED(b)) {
+        gc_remember_unprotected(objspace, b);
+    }
+    else {
+        RVALUE_AGE_SET(b, RVALUE_OLD_AGE);
+        RVALUE_OLD_UNCOLLECTIBLE_SET(objspace, b);
+        rgengc_remember(objspace, b);
     }
 
     check_rvalue_consistency(a);
