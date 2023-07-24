@@ -1603,4 +1603,39 @@ class TestMethod < Test::Unit::TestCase
   def test_invalidating_CC_ASAN
     assert_ruby_status(['-e', 'using Module.new'])
   end
+
+  def test_callcache_references
+    omit "This test is flaky with RJIT" if defined?(RubyVM::RJIT) && RubyVM::RJIT.enabled?
+    omit "This test is flaky with YJIT" if defined?(RubyVM::YJIT) && RubyVM::YJIT.enabled?
+
+    # [Bug #19436]
+
+    mod = Module.new do
+      def bar
+      end
+    end
+
+    def call_bar(obj)
+      # Make sure that the callcache here only holds a weak reference to the
+      # method entry, so that the obj passed in can be reclaimed.
+      #
+      # The reference chain is IMEMO(callcache) -> IMEMO(ment) -> ICLASS -> CLASS(singleton) -> OBJECT
+      obj.bar
+    end
+
+    obj = Object.new
+    obj.extend(mod)
+
+    call_bar(obj)
+
+    id = obj.object_id
+    obj = nil
+
+    GC.start
+    GC.start
+
+    assert_raise(RangeError) do
+      ObjectSpace._id2ref(id)
+    end
+  end
 end

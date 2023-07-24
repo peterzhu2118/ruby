@@ -330,9 +330,7 @@ vm_cc_new(VALUE klass,
 
     switch (type) {
       case cc_type_normal:
-        break;
       case cc_type_super:
-        *(VALUE *)&cc->flags |= VM_CALLCACHE_SUPER;
         break;
       case cc_type_refinement:
         *(VALUE *)&cc->flags |= VM_CALLCACHE_REFINEMENT;
@@ -344,11 +342,6 @@ vm_cc_new(VALUE klass,
     return cc;
 }
 
-static inline bool
-vm_cc_super_p(const struct rb_callcache *cc)
-{
-    return (cc->flags & VM_CALLCACHE_SUPER) != 0;
-}
 
 static inline bool
 vm_cc_refinement_p(const struct rb_callcache *cc)

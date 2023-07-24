@@ -3200,7 +3200,6 @@ vm_ccs_free(struct rb_class_cc_entries *ccs, int alive, rb_objspace_t *objspace,
                 }
             }
 
-            VM_ASSERT(!vm_cc_super_p(cc) && !vm_cc_refinement_p(cc));
             vm_cc_invalidate(cc);
         }
         ruby_xfree(ccs->entries);
@@ -6993,29 +6992,9 @@ gc_mark_imemo(rb_objspace_t *objspace, VALUE obj)
       case imemo_callinfo:
         return;
       case imemo_callcache:
-        /* cc is callcache.
-         *
-         * cc->klass (klass) should not be marked because if the klass is
-         * free'ed, the cc->klass will be cleared by `vm_cc_invalidate()`.
-         *
-         * cc->cme (cme) should not be marked because if cc is invalidated
-         * when cme is free'ed.
-         * - klass marks cme if klass uses cme.
-         * - caller classe's ccs->cme marks cc->cme.
-         * - if cc is invalidated (klass doesn't refer the cc),
-         *   cc is invalidated by `vm_cc_invalidate()` and cc->cme is
-         *   not be accessed.
-         * - On the multi-Ractors, cme will be collected with global GC
-         *   so that it is safe if GC is not interleaving while accessing
-         *   cc and cme.
-         * - However, cc_type_super is not chained from cc so the cc->cme
-         *   should be marked.
-         */
         {
             const struct rb_callcache *cc = (const struct rb_callcache *)obj;
-            if (vm_cc_super_p(cc)) {
-                gc_mark(objspace, (VALUE)cc->cme_);
-            }
+            rb_gc_mark_weak((VALUE *)&cc->cme_);
         }
         return;
       case imemo_constcache:
@@ -10079,14 +10058,6 @@ gc_update_values(rb_objspace_t *objspace, long n, VALUE *values)
     }
 }
 
-static bool
-moved_or_living_object_strictly_p(rb_objspace_t *objspace, VALUE obj)
-{
-    return obj &&
-           is_pointer_to_heap(objspace, (void *)obj) &&
-           (is_live_object(objspace, obj) || BUILTIN_TYPE(obj) == T_MOVED);
-}
-
 static void
 gc_ref_update_imemo(rb_objspace_t *objspace, VALUE obj)
 {
@@ -10135,19 +10106,8 @@ gc_ref_update_imemo(rb_objspace_t *objspace, VALUE obj)
         {
             const struct rb_callcache *cc = (const struct rb_callcache *)obj;
 
-            if (!cc->klass) {
-                // already invalidated
-            }
-            else {
-                if (moved_or_living_object_strictly_p(objspace, cc->klass) &&
-                    moved_or_living_object_strictly_p(objspace, (VALUE)cc->cme_)) {
-                    UPDATE_IF_MOVED(objspace, cc->klass);
-                    TYPED_UPDATE_IF_MOVED(objspace, struct rb_callable_method_entry_struct *, cc->cme_);
-                }
-                else {
-                    vm_cc_invalidate(cc);
-                }
-            }
+            UPDATE_IF_MOVED(objspace, cc->klass);
+            TYPED_UPDATE_IF_MOVED(objspace, struct rb_callable_method_entry_struct *, cc->cme_);
         }
         break;
       case imemo_constcache:

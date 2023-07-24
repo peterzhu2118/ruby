@@ -73,7 +73,7 @@ typedef struct rb_callable_method_entry_struct { /* same fields with rb_method_e
 #define METHOD_ENTRY_COMPLEMENTED_SET(me)    ((me)->flags |= IMEMO_FL_USER3)
 #define METHOD_ENTRY_CACHED(me)              ((me)->flags & IMEMO_FL_USER4)
 #define METHOD_ENTRY_CACHED_SET(me)          ((me)->flags |= IMEMO_FL_USER4)
-#define METHOD_ENTRY_INVALIDATED(me)         ((me)->flags & IMEMO_FL_USER5)
+#define METHOD_ENTRY_INVALIDATED(me)         (UNDEF_P((VALUE)(me)) || (me)->flags & IMEMO_FL_USER5)
 #define METHOD_ENTRY_INVALIDATED_SET(me)     ((me)->flags |= IMEMO_FL_USER5)
 
 static inline void

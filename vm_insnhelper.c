@@ -2009,7 +2009,6 @@ vm_ccs_verify(struct rb_class_cc_entries *ccs, ID mid, VALUE klass)
         VM_ASSERT(IMEMO_TYPE_P(cc, imemo_callcache));
         VM_ASSERT(vm_cc_class_check(cc, klass));
         VM_ASSERT(vm_cc_check_cme(cc, ccs->cme));
-        VM_ASSERT(!vm_cc_super_p(cc));
         VM_ASSERT(!vm_cc_refinement_p(cc));
     }
     return TRUE;
