@@ -315,7 +315,11 @@ class TestGCCompact < Test::Unit::TestCase
     begin;
       ARY_COUNT = 500
 
+      refute(GC.auto_compact)
+
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(1, GC.stat(:compact_count))
 
       arys = ARY_COUNT.times.map do
         ary = "abbbbbbbbbb".chars
@@ -323,6 +327,8 @@ class TestGCCompact < Test::Unit::TestCase
       end
 
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(2, GC.stat(:compact_count))
 
       debug_msg = "GC.stat: #{GC.stat}\nGC.stat_heap: #{GC.stat_heap}"
 
@@ -338,7 +344,11 @@ class TestGCCompact < Test::Unit::TestCase
     begin;
       ARY_COUNT = 500
 
+      refute(GC.auto_compact)
+
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(1, GC.stat(:compact_count))
 
       ary = "hello".chars
       arys = ARY_COUNT.times.map do
@@ -348,6 +358,8 @@ class TestGCCompact < Test::Unit::TestCase
       end
 
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(2, GC.stat(:compact_count))
 
       debug_msg = "GC.stat: #{GC.stat}\nGC.stat_heap: #{GC.stat_heap}"
 
@@ -374,6 +386,8 @@ class TestGCCompact < Test::Unit::TestCase
 
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
+      assert_equal(1, GC.stat(:compact_count))
+
       ary = OBJ_COUNT.times.map { Foo.new }
       ary.each(&:add_ivars)
 
@@ -381,6 +395,8 @@ class TestGCCompact < Test::Unit::TestCase
       Foo.new.add_ivars
 
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(2, GC.stat(:compact_count))
 
       debug_msg = "GC.stat: #{GC.stat}\nGC.stat_heap: #{GC.stat_heap}"
 
@@ -396,12 +412,18 @@ class TestGCCompact < Test::Unit::TestCase
     begin;
       STR_COUNT = 500
 
+      refute(GC.auto_compact)
+
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(1, GC.stat(:compact_count))
 
       str = "a" * GC::INTERNAL_CONSTANTS[:BASE_SLOT_SIZE]
       ary = STR_COUNT.times.map { "" << str }
 
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(2, GC.stat(:compact_count))
 
       debug_msg = "GC.stat: #{GC.stat}\nGC.stat_heap: #{GC.stat_heap}"
 
@@ -417,11 +439,17 @@ class TestGCCompact < Test::Unit::TestCase
     begin;
       STR_COUNT = 500
 
+      refute(GC.auto_compact)
+
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(1, GC.stat(:compact_count))
 
       ary = STR_COUNT.times.map { ("a" * GC::INTERNAL_CONSTANTS[:BASE_SLOT_SIZE]).squeeze! }
 
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(2, GC.stat(:compact_count))
 
       debug_msg = "GC.stat: #{GC.stat}\nGC.stat_heap: #{GC.stat_heap}"
 
@@ -443,13 +471,19 @@ class TestGCCompact < Test::Unit::TestCase
     begin;
       HASH_COUNT = 500
 
+      refute(GC.auto_compact)
+
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(1, GC.stat(:compact_count))
 
       base_hash = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 }
       ary = HASH_COUNT.times.map { base_hash.dup }
       ary.each { |h| h[:i] = 9 }
 
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
+
+      assert_equal(2, GC.stat(:compact_count))
 
       debug_msg = "GC.stat: #{GC.stat}\nGC.stat_heap: #{GC.stat_heap}"
 
