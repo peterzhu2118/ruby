@@ -273,12 +273,12 @@ module Test
         token_dump, token_re = new_test_token
         src = <<eom
 # -*- coding: #{line += __LINE__; src.encoding}; -*-
-#{output_encoding ? "puts '#{src.encoding}'" : ""}
 BEGIN {
   require "test/unit";include Test::Unit::Assertions;require #{__FILE__.dump};include Test::Unit::CoreAssertions
   separated_runner #{token_dump}, #{res_c&.fileno || 'nil'}
 }
-#{line -= __LINE__; src}
+#{line -= __LINE__; output_encoding ? "encoding_str = '#{src.encoding}'" : ""}
+#{src}
 eom
         args = args.dup
         args.insert((Hash === args.first ? 1 : 0), "-w", "--disable=gems", *$:.map {|l| "-I#{l}"})
