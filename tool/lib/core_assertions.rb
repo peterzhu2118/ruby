@@ -257,7 +257,7 @@ module Test
         end
       end
 
-      def assert_separately(args, file = nil, line = nil, src, ignore_stderr: nil, **opt)
+      def assert_separately(args, file = nil, line = nil, src, ignore_stderr: nil, output_encoding: false, **opt)
         unless file and line
           loc, = caller_locations(1,1)
           file ||= loc.path
@@ -273,6 +273,7 @@ module Test
         token_dump, token_re = new_test_token
         src = <<eom
 # -*- coding: #{line += __LINE__; src.encoding}; -*-
+#{output_encoding ? "puts '#{src.encoding}'" : ""}
 BEGIN {
   require "test/unit";include Test::Unit::Assertions;require #{__FILE__.dump};include Test::Unit::CoreAssertions
   separated_runner #{token_dump}, #{res_c&.fileno || 'nil'}
