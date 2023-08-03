@@ -5381,6 +5381,7 @@ revert_stack_objects(VALUE stack_obj, void *ctx)
     rb_objspace_t * objspace = (rb_objspace_t*)ctx;
 
     if (BUILTIN_TYPE(stack_obj) == T_MOVED) {
+        rb_bug("revert_stack_objects: should not be here");
         /* For now we'll revert the whole page if the object made it to the
          * stack.  I think we can change this to move just the one object
          * back though */
@@ -5393,6 +5394,7 @@ revert_machine_stack_references(rb_objspace_t *objspace, VALUE v)
 {
     if (is_pointer_to_heap(objspace, (void *)v)) {
         if (BUILTIN_TYPE(v) == T_MOVED) {
+            rb_bug("revert_machine_stack_references: should not be here");
             /* For now we'll revert the whole page if the object made it to the
              * stack.  I think we can change this to move just the one object
              * back though */
