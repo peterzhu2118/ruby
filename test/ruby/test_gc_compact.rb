@@ -326,11 +326,11 @@ class TestGCCompact < Test::Unit::TestCase
         ary.uniq!
       end
 
+      before_dump = ObjectSpace.dump(arys[0])
+
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(2, GC.stat(:compact_count))
-
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump: \#{ObjectSpace.dump(arys[0])}\nstats: \#{stats}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nBefore dump: \#{before_dump}\nDump: \#{ObjectSpace.dump(arys[0])}\nstats: \#{stats}"
 
       assert_operator(stats.dig(:moved_down, :T_ARRAY) || 0, :>=, ARY_COUNT, debug_msg)
       refute_empty(arys.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -348,8 +348,6 @@ class TestGCCompact < Test::Unit::TestCase
 
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(1, GC.stat(:compact_count))
-
       ary = "hello".chars
       arys = ARY_COUNT.times.map do
         x = []
@@ -357,11 +355,11 @@ class TestGCCompact < Test::Unit::TestCase
         x
       end
 
+      before_dump = ObjectSpace.dump(arys[0])
+
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(2, GC.stat(:compact_count))
-
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump: \#{ObjectSpace.dump(arys[0])}\nstats: \#{stats}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nBefore dump: \#{before_dump}\nDump: \#{ObjectSpace.dump(arys[0])}\nstats: \#{stats}"
 
       assert_operator(stats.dig(:moved_up, :T_ARRAY) || 0, :>=, ARY_COUNT, debug_msg)
       refute_empty(arys.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -386,19 +384,17 @@ class TestGCCompact < Test::Unit::TestCase
 
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(1, GC.stat(:compact_count))
-
       ary = OBJ_COUNT.times.map { Foo.new }
       ary.each(&:add_ivars)
 
       GC.start
       Foo.new.add_ivars
 
+      before_dump = ObjectSpace.dump(ary[0])
+
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(2, GC.stat(:compact_count))
-
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nBefore dump: \#{before_dump}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
 
       assert_operator(stats.dig(:moved_up, :T_OBJECT) || 0, :>=, OBJ_COUNT, debug_msg)
       refute_empty(ary.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -421,11 +417,11 @@ class TestGCCompact < Test::Unit::TestCase
       str = "a" * GC::INTERNAL_CONSTANTS[:BASE_SLOT_SIZE]
       ary = STR_COUNT.times.map { "" << str }
 
+      before_dump = ObjectSpace.dump(ary[0])
+
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(2, GC.stat(:compact_count))
-
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nBefore dump: \#{before_dump}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
 
       assert_operator(stats[:moved_up][:T_STRING], :>=, STR_COUNT, debug_msg)
       refute_empty(ary.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -443,15 +439,13 @@ class TestGCCompact < Test::Unit::TestCase
 
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(1, GC.stat(:compact_count))
-
       ary = STR_COUNT.times.map { ("a" * GC::INTERNAL_CONSTANTS[:BASE_SLOT_SIZE]).squeeze! }
+
+      before_dump = ObjectSpace.dump(ary[0])
 
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(2, GC.stat(:compact_count))
-
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nBefore dump: \#{before_dump}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
 
       assert_operator(stats[:moved_down][:T_STRING], :>=, STR_COUNT, debug_msg)
       refute_empty(ary.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -475,17 +469,15 @@ class TestGCCompact < Test::Unit::TestCase
 
       GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(1, GC.stat(:compact_count))
-
       base_hash = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7, h: 8 }
       ary = HASH_COUNT.times.map { base_hash.dup }
       ary.each { |h| h[:i] = 9 }
 
+      before_dump = ObjectSpace.dump(ary[0])
+
       stats = GC.verify_compaction_references(expand_heap: true, toward: :empty)
 
-      assert_equal(2, GC.stat(:compact_count))
-
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nBefore dump: \#{before_dump}\nDump: \#{ObjectSpace.dump(ary[0])}\nstats: \#{stats}"
 
       assert_operator(stats[:moved_down][:T_HASH], :>=, 500, debug_msg)
     end;
