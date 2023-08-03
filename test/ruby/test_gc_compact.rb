@@ -330,7 +330,7 @@ class TestGCCompact < Test::Unit::TestCase
 
       assert_equal(2, GC.stat(:compact_count))
 
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump:\#{ObjectSpace.dump(arys[0])}"
 
       assert_operator(stats.dig(:moved_down, :T_ARRAY) || 0, :>=, ARY_COUNT, debug_msg)
       refute_empty(arys.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -361,7 +361,7 @@ class TestGCCompact < Test::Unit::TestCase
 
       assert_equal(2, GC.stat(:compact_count))
 
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump:\#{ObjectSpace.dump(arys[0])}"
 
       assert_operator(stats.dig(:moved_up, :T_ARRAY) || 0, :>=, ARY_COUNT, debug_msg)
       refute_empty(arys.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -372,7 +372,7 @@ class TestGCCompact < Test::Unit::TestCase
     omit if GC::INTERNAL_CONSTANTS[:SIZE_POOL_COUNT] == 1
     omit "Flaky on Solaris" if /solaris/i =~ RUBY_PLATFORM
 
-    assert_separately(%w[-robjspace], "#{<<~"begin;"}\n#{<<~"end;"}", timeout: 10, signal: :SEGV)
+    assert_separately(%w[-robjspace], "#{<<~"begin;"}\n#{<<~"end;"}", timeout: 10, signal: :SEGV, output_encoding: true)
     begin;
       class Foo
         def add_ivars
@@ -398,7 +398,7 @@ class TestGCCompact < Test::Unit::TestCase
 
       assert_equal(2, GC.stat(:compact_count))
 
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump:\#{ObjectSpace.dump(ary[0])}"
 
       assert_operator(stats.dig(:moved_up, :T_OBJECT) || 0, :>=, OBJ_COUNT, debug_msg)
       refute_empty(ary.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -425,7 +425,7 @@ class TestGCCompact < Test::Unit::TestCase
 
       assert_equal(2, GC.stat(:compact_count))
 
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump:\#{ObjectSpace.dump(ary[0])}"
 
       assert_operator(stats[:moved_up][:T_STRING], :>=, STR_COUNT, debug_msg)
       refute_empty(ary.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -451,7 +451,7 @@ class TestGCCompact < Test::Unit::TestCase
 
       assert_equal(2, GC.stat(:compact_count))
 
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump:\#{ObjectSpace.dump(ary[0])}"
 
       assert_operator(stats[:moved_down][:T_STRING], :>=, STR_COUNT, debug_msg)
       refute_empty(ary.keep_if { |o| ObjectSpace.dump(o).include?('"embedded":true') }, debug_msg)
@@ -485,7 +485,7 @@ class TestGCCompact < Test::Unit::TestCase
 
       assert_equal(2, GC.stat(:compact_count))
 
-      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}"
+      debug_msg = "GC.stat: \#{GC.stat}\nGC.stat(:compact_count): \#{GC.stat(:compact_count)}\nGC.stat_heap: \#{GC.stat_heap}\nencoding: \#{encoding_str}\nDump:\#{ObjectSpace.dump(ary[0])}"
 
       assert_operator(stats[:moved_down][:T_HASH], :>=, 500, debug_msg)
     end;
