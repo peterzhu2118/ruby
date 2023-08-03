@@ -5432,7 +5432,7 @@ gc_compact_finish(rb_objspace_t *objspace)
      * finishes up, it may remove the read barrier before anything has a
      * chance to read from the T_MOVED address. To fix this, we scan the stack
      * then revert any moved objects that made it to the stack. */
-    check_stack_for_moved(objspace);
+    // check_stack_for_moved(objspace);
 
     gc_update_references(objspace);
     objspace->profile.compact_count++;
