@@ -85,6 +85,7 @@ struct rb_objspace; /* in vm_core.h */
 typedef struct ractor_newobj_size_pool_cache {
     struct RVALUE *freelist;
     struct heap_page *using_page;
+    size_t incremental_mark_step_allocated_slots;
 } rb_ractor_newobj_size_pool_cache_t;
 
 typedef struct ractor_newobj_cache {

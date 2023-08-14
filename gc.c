@@ -694,9 +694,13 @@ typedef struct rb_heap_struct {
     struct heap_page *sweeping_page; /* iterator for .pages */
     struct heap_page *compact_cursor;
     uintptr_t compact_cursor_index;
+
 #if GC_ENABLE_INCREMENTAL_MARK
     struct heap_page *pooled_pages;
+    size_t pooled_slots;
+    size_t step_slots;
 #endif
+
     size_t total_pages;      /* total page count in a heap */
     size_t total_slots;      /* total slot count (about total_pages * HEAP_PAGE_OBJ_LIMIT) */
 } rb_heap_t;
@@ -868,6 +872,8 @@ typedef struct rb_objspace {
     struct {
         size_t pooled_slots;
         size_t step_slots;
+
+        bool experimental_feature_size_pool_pooled_pages;
     } rincgc;
 #endif
 
@@ -2017,7 +2023,13 @@ heap_add_poolpage(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *pa
 
     page->free_next = heap->pooled_pages;
     heap->pooled_pages = page;
-    objspace->rincgc.pooled_slots += page->free_slots;
+
+    if (objspace->rincgc.experimental_feature_size_pool_pooled_pages) {
+        heap->pooled_slots += page->free_slots;
+    }
+    else {
+        objspace->rincgc.pooled_slots += page->free_slots;
+    }
 
     asan_lock_freelist(page);
 }
@@ -2625,13 +2637,25 @@ ractor_cache_allocate_slot(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *ca
 
 #if GC_ENABLE_INCREMENTAL_MARK
     if (is_incremental_marking(objspace)) {
-        // Not allowed to allocate without running an incremental marking step
-        if (cache->incremental_mark_step_allocated_slots >= INCREMENTAL_MARK_STEP_ALLOCATIONS) {
-            return Qfalse;
-        }
+        if (objspace->rincgc.experimental_feature_size_pool_pooled_pages) {
+            // Not allowed to allocate without running an incremental marking step
+            if (size_pool_cache->incremental_mark_step_allocated_slots >= INCREMENTAL_MARK_STEP_ALLOCATIONS) {
+                return Qfalse;
+            }
 
-        if (p) {
-            cache->incremental_mark_step_allocated_slots++;
+            if (p) {
+                size_pool_cache->incremental_mark_step_allocated_slots++;
+            }
+        }
+        else {
+            // Not allowed to allocate without running an incremental marking step
+            if (cache->incremental_mark_step_allocated_slots >= INCREMENTAL_MARK_STEP_ALLOCATIONS) {
+                return Qfalse;
+            }
+
+            if (p) {
+                cache->incremental_mark_step_allocated_slots++;
+            }
         }
     }
 #endif
@@ -2745,6 +2769,7 @@ newobj_alloc(rb_objspace_t *objspace, rb_ractor_t *cr, size_t size_pool_idx, boo
     rb_size_pool_t *size_pool = &size_pools[size_pool_idx];
     rb_heap_t *heap = SIZE_POOL_EDEN_HEAP(size_pool);
     rb_ractor_newobj_cache_t *cache = &cr->newobj_cache;
+    rb_ractor_newobj_size_pool_cache_t *size_pool_cache = &cache->size_pool_caches[size_pool_idx];
 
     VALUE obj = ractor_cache_allocate_slot(objspace, cache, size_pool_idx);
 
@@ -2765,6 +2790,7 @@ newobj_alloc(rb_objspace_t *objspace, rb_ractor_t *cr, size_t size_pool_idx, boo
             if (is_incremental_marking(objspace)) {
                 gc_continue(objspace, size_pool, heap);
                 cache->incremental_mark_step_allocated_slots = 0;
+                size_pool_cache->incremental_mark_step_allocated_slots = 0;
 
                 // Retry allocation after resetting incremental_mark_step_allocated_slots
                 obj = ractor_cache_allocate_slot(objspace, cache, size_pool_idx);
@@ -3810,6 +3836,10 @@ Init_heap(void)
     /* Need to determine if we can use mmap at runtime. */
     heap_page_alloc_use_mmap = INIT_HEAP_PAGE_ALLOC_USE_MMAP;
 #endif
+
+    if (getenv("RUBY_GC_EXPERIMENTAL_FEATURE_SIZE_POOL_POOLED_PAGES")) {
+        objspace->rincgc.experimental_feature_size_pool_pooled_pages = true;
+    }
 
     objspace->next_object_id = INT2FIX(OBJ_ID_INITIAL);
     objspace->id_to_obj_tbl = st_init_table(&object_id_hash_type);
@@ -5818,6 +5848,8 @@ gc_sweep_start(rb_objspace_t *objspace)
         rb_size_pool_t *size_pool = &size_pools[i];
         rb_heap_t *heap = SIZE_POOL_EDEN_HEAP(size_pool);
 
+        heap->pooled_slots = 0;
+
         gc_sweep_start_heap(objspace, heap);
 
 #if USE_RVARGC
@@ -5929,6 +5961,7 @@ gc_sweep_finish(rb_objspace_t *objspace)
             }
             eden_heap->pooled_pages = NULL;
             objspace->rincgc.pooled_slots = 0;
+            eden_heap->pooled_slots = 0;
         }
 #endif
 #endif
@@ -8181,13 +8214,24 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 
     if (full_mark) {
 #if GC_ENABLE_INCREMENTAL_MARK
-        size_t incremental_marking_steps = (objspace->rincgc.pooled_slots / INCREMENTAL_MARK_STEP_ALLOCATIONS) + 1;
-        objspace->rincgc.step_slots = (objspace->marked_slots * 2) / incremental_marking_steps;
+        if (objspace->rincgc.experimental_feature_size_pool_pooled_pages) {
+            for (int i = 0; i < SIZE_POOL_COUNT; i++) {
+                rb_size_pool_t *size_pool = &size_pools[i];
+                rb_heap_t *heap = SIZE_POOL_EDEN_HEAP(size_pool);
 
-        if (0) fprintf(stderr, "objspace->marked_slots: %"PRIdSIZE", "
-                       "objspace->rincgc.pooled_page_num: %"PRIdSIZE", "
-                       "objspace->rincgc.step_slots: %"PRIdSIZE", \n",
-                       objspace->marked_slots, objspace->rincgc.pooled_slots, objspace->rincgc.step_slots);
+                size_t incremental_marking_steps = (heap->pooled_slots / INCREMENTAL_MARK_STEP_ALLOCATIONS) + 1;
+                heap->step_slots = (objspace->marked_slots * 2) / incremental_marking_steps;
+            }
+        }
+        else {
+            size_t incremental_marking_steps = (objspace->rincgc.pooled_slots / INCREMENTAL_MARK_STEP_ALLOCATIONS) + 1;
+            objspace->rincgc.step_slots = (objspace->marked_slots * 2) / incremental_marking_steps;
+
+            if (0) fprintf(stderr, "objspace->marked_slots: %"PRIdSIZE", "
+                        "objspace->rincgc.pooled_page_num: %"PRIdSIZE", "
+                        "objspace->rincgc.step_slots: %"PRIdSIZE", \n",
+                        objspace->marked_slots, objspace->rincgc.pooled_slots, objspace->rincgc.step_slots);
+        }
 #endif
         objspace->flags.during_minor_gc = FALSE;
         if (ruby_enable_autocompact) {
@@ -8674,7 +8718,9 @@ gc_marks_continue(rb_objspace_t *objspace, rb_size_pool_t *size_pool, rb_heap_t 
     if (heap->free_pages) {
         gc_report(2, objspace, "gc_marks_continue: has pooled pages");
 
-        marking_finished = gc_marks_step(objspace, objspace->rincgc.step_slots);
+        size_t step_slots =
+            objspace->rincgc.experimental_feature_size_pool_pooled_pages ? heap->step_slots : objspace->rincgc.step_slots;
+        marking_finished = gc_marks_step(objspace, step_slots);
     }
     else {
         gc_report(2, objspace, "gc_marks_continue: no more pooled pages (stack depth: %"PRIdSIZE").\n",
@@ -9199,6 +9245,8 @@ rb_gc_ractor_newobj_cache_clear(rb_ractor_newobj_cache_t *newobj_cache)
 
     for (size_t size_pool_idx = 0; size_pool_idx < SIZE_POOL_COUNT; size_pool_idx++) {
         rb_ractor_newobj_size_pool_cache_t *cache = &newobj_cache->size_pool_caches[size_pool_idx];
+
+        cache->incremental_mark_step_allocated_slots = 0;
 
         struct heap_page *page = cache->using_page;
         RVALUE *freelist = cache->freelist;
