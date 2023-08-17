@@ -11437,6 +11437,8 @@ enum gc_stat_heap_sym {
     gc_stat_heap_sym_total_freed_pages,
     gc_stat_heap_sym_force_major_gc_count,
     gc_stat_heap_sym_force_incremental_marking_finish_count,
+    gc_stat_heap_sym_pooled_slots,
+    gc_stat_heap_sym_step_slots,
     gc_stat_heap_sym_last
 };
 
@@ -11457,6 +11459,8 @@ setup_gc_stat_heap_symbols(void)
         S(total_freed_pages);
         S(force_major_gc_count);
         S(force_incremental_marking_finish_count);
+        S(pooled_slots);
+        S(step_slots);
 #undef S
     }
 }
@@ -11501,6 +11505,8 @@ gc_stat_heap_internal(int size_pool_idx, VALUE hash_or_sym)
     SET(total_freed_pages, size_pool->total_freed_pages);
     SET(force_major_gc_count, size_pool->force_major_gc_count);
     SET(force_incremental_marking_finish_count, size_pool->force_incremental_marking_finish_count);
+    SET(pooled_slots, SIZE_POOL_EDEN_HEAP(size_pool)->pooled_slots);
+    SET(step_slots, SIZE_POOL_EDEN_HEAP(size_pool)->step_slots);
 #undef SET
 
     if (!NIL_P(key)) { /* matched key should return above */

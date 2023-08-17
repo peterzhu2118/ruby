@@ -164,6 +164,8 @@ class TestGc < Test::Unit::TestCase
       assert_operator stat_heap[:total_freed_pages], :>=, 0
       assert_operator stat_heap[:force_major_gc_count], :>=, 0
       assert_operator stat_heap[:force_incremental_marking_finish_count], :>=, 0
+      assert_operator stat_heap[:pooled_slots], :>=, 0
+      assert_operator stat_heap[:step_slots], :>=, 0
     end
 
     GC.stat_heap(0, stat_heap)
