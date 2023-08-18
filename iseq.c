@@ -291,7 +291,7 @@ cc_is_active(const struct rb_callcache *cc, bool reference_updating)
         }
 
         if (vm_cc_markable(cc)) {
-            if (cc->klass) { // cc is not invalidated
+            if (vm_cc_klass_valid_p(cc)) { // cc is not invalidated
                 const struct rb_callable_method_entry_struct *cme = vm_cc_cme(cc);
                 if (reference_updating) {
                     cme = (const struct rb_callable_method_entry_struct *)rb_gc_location((VALUE)cme);

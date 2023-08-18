@@ -317,7 +317,7 @@ invalidate_all_refinement_cc(void *vstart, void *vend, size_t stride, void *data
         if (RBASIC(v)->flags) { // liveness check
             if (imemo_type_p(v, imemo_callcache)) {
                 const struct rb_callcache *cc = (const struct rb_callcache *)v;
-                if (vm_cc_refinement_p(cc) && cc->klass) {
+                if (vm_cc_refinement_p(cc) && vm_cc_klass_valid_p(cc)) {
                     vm_cc_invalidate(cc);
                 }
             }

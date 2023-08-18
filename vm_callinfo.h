@@ -277,7 +277,7 @@ struct rb_callcache {
     /* inline cache: key */
     const VALUE klass; // should not mark it because klass can not be free'd
                        // because of this marking. When klass is collected,
-                       // cc will be cleared (cc->klass = 0) at vm_ccs_free().
+                       // cc will be cleared (cc->klass = Qundef) at vm_ccs_free().
 
     /* inline cache: values */
     const struct rb_callable_method_entry_struct * const cme_;
@@ -362,10 +362,16 @@ vm_cc_refinement_p(const struct rb_callcache *cc)
     }
 
 static inline bool
+vm_cc_klass_valid_p(const struct rb_callcache *cc)
+{
+    return cc->klass != Qundef;
+}
+
+static inline bool
 vm_cc_class_check(const struct rb_callcache *cc, VALUE klass)
 {
     VM_ASSERT(IMEMO_TYPE_P(cc, imemo_callcache));
-    VM_ASSERT(cc->klass == 0 ||
+    VM_ASSERT(!vm_cc_klass_valid_p(cc) ||
               RB_TYPE_P(cc->klass, T_CLASS) || RB_TYPE_P(cc->klass, T_ICLASS));
     return cc->klass == klass;
 }
@@ -445,7 +451,7 @@ vm_cc_cmethod_missing_reason(const struct rb_callcache *cc)
 static inline bool
 vm_cc_invalidated_p(const struct rb_callcache *cc)
 {
-    if (cc->klass && !METHOD_ENTRY_INVALIDATED(vm_cc_cme(cc))) {
+    if (!vm_cc_klass_valid_p(cc) && !METHOD_ENTRY_INVALIDATED(vm_cc_cme(cc))) {
         return false;
     }
     else {
@@ -536,9 +542,9 @@ vm_cc_invalidate(const struct rb_callcache *cc)
 {
     VM_ASSERT(IMEMO_TYPE_P(cc, imemo_callcache));
     VM_ASSERT(cc != vm_cc_empty());
-    VM_ASSERT(cc->klass != 0); // should be enable
+    VM_ASSERT(vm_cc_klass_valid_p(cc)); // should be enable
 
-    *(VALUE *)&cc->klass = 0;
+    *(VALUE *)&cc->klass = Qundef;
     RB_DEBUG_COUNTER_INC(cc_ent_invalidate);
 }
 
