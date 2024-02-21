@@ -187,7 +187,7 @@ jobs:
 
       - run: nmake test-all
         env:
-          RUBY_TESTOPTS: ../test/-ext-/load/test_destruct.rb -j${{ env.TEST_JOBS || 4 }} --job-status=normal
+          RUBY_TESTOPTS: --name=/test_destruct/ -j${{ env.TEST_JOBS || 4 }} --job-status=normal
         timeout-minutes: 60
 
       - uses: ./.github/actions/slack

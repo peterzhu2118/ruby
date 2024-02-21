@@ -125,7 +125,7 @@ jobs:
           make ${{ StartsWith(matrix.test_task, 'test/') && matrix.test_task || 'test-all' }}
         env:
           RUBY_TESTOPTS: >-
-            ../test/-ext-/load/test_destruct.rb --retry --job-status=normal --show-skip --timeout-scale=1.5
+            --name=/test_destruct/ --retry --job-status=normal --show-skip --timeout-scale=1.5
             ${{ matrix.test-all-opts }}
           BUNDLER_VERSION:
         if: ${{ matrix.test_task == 'check' || matrix.test_task == 'test-all' || StartsWith(matrix.test_task, 'test/') }}
