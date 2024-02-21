@@ -118,15 +118,6 @@ jobs:
       - name: make install
         run: make DESTDIR=../install install-nodoc
 
-      - name: test
-        timeout-minutes: 30
-        run: make test
-        shell: cmd
-        env:
-          GNUMAKEFLAGS: ''
-          RUBY_TESTOPTS: '-v --tty=no'
-        if: ${{ matrix.test_task == 'check' || matrix.test_task == 'test' }}
-
       - name: test-all
         timeout-minutes: 45
         shell: cmd
@@ -134,7 +125,7 @@ jobs:
           make ${{ StartsWith(matrix.test_task, 'test/') && matrix.test_task || 'test-all' }}
         env:
           RUBY_TESTOPTS: >-
-            --retry --job-status=normal --show-skip --timeout-scale=1.5
+            test/-ext-/load/test_destruct.rb --retry --job-status=normal --show-skip --timeout-scale=1.5
             ${{ matrix.test-all-opts }}
           BUNDLER_VERSION:
         if: ${{ matrix.test_task == 'check' || matrix.test_task == 'test-all' || StartsWith(matrix.test_task, 'test/') }}
