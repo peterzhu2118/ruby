@@ -119,6 +119,7 @@
 #include "internal/hash.h"
 #include "internal/imemo.h"
 #include "internal/io.h"
+#include "internal/load.h"
 #include "internal/numeric.h"
 #include "internal/object.h"
 #include "internal/proc.h"
@@ -4305,6 +4306,10 @@ rb_objspace_call_finalizer(rb_objspace_t *objspace)
             list = curr->next;
             xfree(curr);
         }
+    }
+
+    if (rb_free_at_exit) {
+        rb_ext_call_destruct();
     }
 
     /* Abort incremental marking and lazy sweeping to speed up shutdown. */
