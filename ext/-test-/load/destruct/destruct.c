@@ -5,7 +5,7 @@ void
 Init_destruct(void)
 {}
 
-RUBY_FUNC_EXPORTED void
+__declspec(dllexport) void
 Destruct_destruct(void)
 {
     printf("Calling Destruct_destruct\n");
