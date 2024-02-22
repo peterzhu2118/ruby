@@ -5,7 +5,7 @@ void
 Init_destruct(void)
 {}
 
-__declspec(dllexport) void
+void
 Destruct_destruct(void)
 {
     printf("Calling Destruct_destruct\n");

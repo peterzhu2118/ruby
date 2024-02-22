@@ -515,8 +515,6 @@ dln_load(const char *file)
     char *init_fct_name;
     init_funcname(&init_fct_name, file);
 
-    fprintf(stderr, "dln_load: %p (%s)\n", handle, init_fct_name);
-
     /* Call the init code */
     dln_sym_callable(void, (void), handle, init_fct_name)();
 
@@ -543,7 +541,7 @@ dln_load(const char *file)
     return 0;			/* dummy return */
 }
 
-#define DESTRUCT_FUNC_PREFIX "Destruct_"
+#define DESTRUCT_FUNC_PREFIX EXTERNAL_PREFIX"Destruct_"
 
 void
 dln_unload(const char *file, void *handle)
@@ -561,13 +559,6 @@ dln_unload(const char *file, void *handle)
 
     if (symbol) {
         ((void (*)(void))symbol)();
-    }
-    else {
-#if defined(_WIN32)
-        char message[1024];
-        char *error = dln_strerror();
-        fprintf(stderr, "Symbol is not found! %p (%s) (%s)\n", handle, destruct_func_name, error);
-#endif
     }
 #else
     dln_notimplement();
