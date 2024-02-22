@@ -2403,7 +2403,7 @@ RULES
           makedef = %{$(RUBY) -pe "$$_.sub!(/^(?=\\w)/,'#{EXPORT_PREFIX}') unless 1../^EXPORTS$/i" #{deffile}}
         end
       else
-        makedef = %{(echo EXPORTS && echo $(TARGET_ENTRY))}
+        makedef = %{(echo EXPORTS && echo $(TARGET_ENTRY) && echo $(TARGET_DESTRUCT))}
       end
       if makedef
         $cleanfiles << '$(DEFFILE)'
@@ -2453,6 +2453,7 @@ LOCAL_HDRS = #{$headers.join(' ')}
 TARGET = #{target}
 TARGET_NAME = #{target && target[/\A\w+/]}
 TARGET_ENTRY = #{EXPORT_PREFIX || ''}Init_$(TARGET_NAME)
+TARGET_DESTRUCT = #{EXPORT_PREFIX || ''}Destruct_$(TARGET_NAME)
 DLLIB = #{dllib}
 EXTSTATIC = #{$static || ""}
 STATIC_LIB = #{staticlib unless $static.nil?}
