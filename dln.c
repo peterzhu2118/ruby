@@ -547,13 +547,12 @@ void
 dln_unload(const char *file, void *handle)
 {
 #if defined(_WIN32) || defined(USE_DLN_DLOPEN)
-    const char *base = file;
-    const size_t flen = init_funcname_len(&base);
+    const struct string_part part = init_funcname_len(file);
     const size_t plen = sizeof(DESTRUCT_FUNC_PREFIX) - 1;
-    char *const destruct_func_name = ALLOCA_N(char, plen + flen + 1);
+    char *const destruct_func_name = ALLOCA_N(char, plen + part.len + 1);
     memcpy(destruct_func_name, DESTRUCT_FUNC_PREFIX, plen);
-    memcpy(destruct_func_name + plen, base, flen);
-    destruct_func_name[plen + flen] = '\0';
+    memcpy(destruct_func_name + plen, part.ptr, part.len);
+    destruct_func_name[plen + part.len] = '\0';
 
     void *symbol = dln_sym(handle, destruct_func_name);
 
