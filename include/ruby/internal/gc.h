@@ -801,6 +801,10 @@ rb_obj_written(
     RGENGC_LOGGING_OBJ_WRITTEN(a, oldv, b, filename, line);
 #endif
 
+    if (b == 8) {
+        rb_bug("b is 8");
+    }
+
     if (!RB_SPECIAL_CONST_P(b)) {
         rb_gc_writebarrier(a, b);
     }
