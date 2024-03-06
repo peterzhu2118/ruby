@@ -6394,6 +6394,10 @@ mark_stack_free_cache(mark_stack_t *stack)
 static void
 push_mark_stack(mark_stack_t *stack, VALUE data)
 {
+    if (BUILTIN_TYPE(data) == T_ARRAY && RARRAY_LEN(data) == 2 && RARRAY_AREF(data, 1) == 8) {
+        rb_bug("it's 8");
+    }
+
     VALUE obj = data;
     switch (BUILTIN_TYPE(obj)) {
       case T_OBJECT:
