@@ -127,9 +127,7 @@ struct rb_objspace; /* in vm_core.h */
 #endif
 
 #define NEWOBJ_OF(var, T, c, f, s, ec) \
-    T *(var) = (T *)(((f) & FL_WB_PROTECTED) ? \
-            rb_wb_protected_newobj_of((ec ? ec : GET_EC()), (c), (f) & ~FL_WB_PROTECTED, s) : \
-            rb_wb_unprotected_newobj_of((c), (f), s))
+    T *(var) = (T *)(newobj_of_helper(ec, c, f, s))
 
 #define RB_OBJ_GC_FLAGS_MAX 6   /* used in ext/objspace */
 
@@ -336,4 +334,18 @@ ruby_sized_realloc_n(void *ptr, size_t new_count, size_t element_size, size_t ol
 #define ruby_sized_xrealloc ruby_sized_xrealloc_inlined
 #define ruby_sized_xrealloc2 ruby_sized_xrealloc2_inlined
 #define ruby_sized_xfree ruby_sized_xfree_inlined
+
+static inline VALUE
+newobj_of_helper(rb_execution_context_t *ec, VALUE klass, VALUE flags, size_t size)
+{
+    if (flags & FL_WB_PROTECTED) {
+        if (ec == NULL) ec = GET_EC();
+
+        return rb_wb_protected_newobj_of(ec, klass, flags & ~FL_WB_PROTECTED, size);
+    }
+    else {
+        return rb_wb_unprotected_newobj_of(klass, flags, size);
+    }
+}
+
 #endif /* INTERNAL_GC_H */
