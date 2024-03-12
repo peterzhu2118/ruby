@@ -2573,11 +2573,6 @@ newobj_init(VALUE klass, VALUE flags, int wb_protected, rb_objspace_t *objspace,
     p->as.basic.flags = flags;
     *((VALUE *)&p->as.basic.klass) = klass;
 
-    int t = flags & RUBY_T_MASK;
-    if (t == T_CLASS || t == T_MODULE || t == T_ICLASS) {
-        RVALUE_AGE_SET_CANDIDATE(objspace, obj);
-    }
-
 #if RACTOR_CHECK_MODE
     rb_ractor_setup_belonging(obj);
 #endif
@@ -2940,6 +2935,15 @@ rb_wb_protected_newobj_of(rb_execution_context_t *ec, VALUE klass, VALUE flags, 
 {
     GC_ASSERT((flags & FL_WB_PROTECTED) == 0);
     return newobj_of(rb_ec_ractor_ptr(ec), klass, flags, 0, 0, 0, TRUE, size);
+}
+
+VALUE
+rb_wb_protected_newobj_of_class(rb_execution_context_t *ec, VALUE klass, VALUE flags, size_t size)
+{
+    VALUE obj = rb_wb_protected_newobj_of(ec, klass, flags, size);
+    RVALUE_AGE_SET_CANDIDATE(&rb_objspace, obj);
+
+    return obj;
 }
 
 /* for compatibility */

@@ -256,6 +256,7 @@ VALUE rb_gc_disable_no_rest(void);
 /* gc.c (export) */
 const char *rb_objspace_data_type_name(VALUE obj);
 VALUE rb_wb_protected_newobj_of(struct rb_execution_context_struct *, VALUE, VALUE, size_t);
+VALUE rb_wb_protected_newobj_of_class(struct rb_execution_context_struct *, VALUE, VALUE, size_t);
 VALUE rb_wb_unprotected_newobj_of(VALUE, VALUE, size_t);
 size_t rb_obj_memsize_of(VALUE);
 void rb_gc_verify_internal_consistency(void);
@@ -339,9 +340,17 @@ static inline VALUE
 newobj_of_helper(rb_execution_context_t *ec, VALUE klass, VALUE flags, size_t size)
 {
     if (flags & FL_WB_PROTECTED) {
+        flags = flags & ~FL_WB_PROTECTED;
         if (ec == NULL) ec = GET_EC();
 
-        return rb_wb_protected_newobj_of(ec, klass, flags & ~FL_WB_PROTECTED, size);
+        switch (flags & RUBY_T_MASK) {
+          case T_CLASS:
+          case T_ICLASS:
+          case T_MODULE:
+            return rb_wb_protected_newobj_of_class(ec, klass, flags, size);
+          default:
+            return rb_wb_protected_newobj_of(ec, klass, flags, size);
+        }
     }
     else {
         return rb_wb_unprotected_newobj_of(klass, flags, size);
