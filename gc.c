@@ -11044,6 +11044,7 @@ enum gc_stat_heap_sym {
     gc_stat_heap_sym_slot_size,
     gc_stat_heap_sym_heap_live_slots,
     gc_stat_heap_sym_heap_free_slots,
+    gc_stat_heap_sym_heap_final_slots,
     gc_stat_heap_sym_heap_allocatable_pages,
     gc_stat_heap_sym_heap_eden_pages,
     gc_stat_heap_sym_heap_eden_slots,
@@ -11068,6 +11069,7 @@ setup_gc_stat_heap_symbols(void)
         S(slot_size);
         S(heap_live_slots);
         S(heap_free_slots);
+        S(heap_final_slots);
         S(heap_allocatable_pages);
         S(heap_eden_pages);
         S(heap_eden_slots);
@@ -11118,6 +11120,7 @@ gc_stat_heap_internal(int size_pool_idx, VALUE hash_or_sym)
     SET(heap_free_slots,
         size_pool->eden_heap.total_slots + size_pool->tomb_heap.total_slots -
             (size_pool->total_allocated_objects - size_pool->total_freed_objects));
+    SET(heap_final_slots, size_pool->final_slots);
     SET(heap_allocatable_pages, size_pool->allocatable_pages);
     SET(heap_eden_pages, SIZE_POOL_EDEN_HEAP(size_pool)->total_pages);
     SET(heap_eden_slots, SIZE_POOL_EDEN_HEAP(size_pool)->total_slots);

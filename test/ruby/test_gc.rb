@@ -162,6 +162,7 @@ class TestGc < Test::Unit::TestCase
       assert_equal GC::INTERNAL_CONSTANTS[:RVALUE_SIZE] * (2**i), stat_heap[:slot_size]
       assert_operator stat_heap[:heap_live_slots], :<=, stat[:heap_live_slots]
       assert_operator stat_heap[:heap_free_slots], :<=, stat[:heap_free_slots]
+      assert_operator stat_heap[:heap_final_slots], :<=, stat[:heap_final_slots]
       assert_operator stat_heap[:heap_allocatable_pages], :<=, stat[:heap_allocatable_pages]
       assert_operator stat_heap[:heap_eden_pages], :<=, stat[:heap_eden_pages]
       assert_operator stat_heap[:heap_eden_slots], :>=, 0
@@ -225,6 +226,7 @@ class TestGc < Test::Unit::TestCase
 
     assert_equal stat[:heap_live_slots], stat_heap_sum[:heap_live_slots]
     assert_equal stat[:heap_free_slots], stat_heap_sum[:heap_free_slots]
+    assert_equal stat[:heap_final_slots], stat_heap_sum[:heap_final_slots]
     assert_equal stat[:heap_allocatable_pages], stat_heap_sum[:heap_allocatable_pages]
     assert_equal stat[:heap_eden_pages], stat_heap_sum[:heap_eden_pages]
     assert_equal stat[:heap_tomb_pages], stat_heap_sum[:heap_tomb_pages]
