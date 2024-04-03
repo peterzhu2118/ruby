@@ -160,6 +160,7 @@ class TestGc < Test::Unit::TestCase
       end
 
       assert_equal GC::INTERNAL_CONSTANTS[:RVALUE_SIZE] * (2**i), stat_heap[:slot_size]
+      assert_operator stat_heap[:heap_live_slots], :<=, stat[:heap_live_slots]
       assert_operator stat_heap[:heap_allocatable_pages], :<=, stat[:heap_allocatable_pages]
       assert_operator stat_heap[:heap_eden_pages], :<=, stat[:heap_eden_pages]
       assert_operator stat_heap[:heap_eden_slots], :>=, 0
@@ -196,7 +197,7 @@ class TestGc < Test::Unit::TestCase
       GC.stat_heap(i, stat_heap)
 
       # Remove keys that can vary between invocations
-      %i(total_allocated_objects).each do |sym|
+      %i(total_allocated_objects heap_live_slots).each do |sym|
         stat_heap[sym] = stat_heap_all[i][sym] = 0
       end
 
@@ -221,6 +222,7 @@ class TestGc < Test::Unit::TestCase
       hash.each { |k, v| stat_heap_sum[k] += v }
     end
 
+    assert_equal stat[:heap_live_slots], stat_heap_sum[:heap_live_slots]
     assert_equal stat[:heap_allocatable_pages], stat_heap_sum[:heap_allocatable_pages]
     assert_equal stat[:heap_eden_pages], stat_heap_sum[:heap_eden_pages]
     assert_equal stat[:heap_tomb_pages], stat_heap_sum[:heap_tomb_pages]
