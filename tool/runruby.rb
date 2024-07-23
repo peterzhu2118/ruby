@@ -169,6 +169,12 @@ if debugger
   end
 end
 
+if ENV['RUNRUBY_USE_MACOS_LEAKS']
+  ENV['RUBY_FREE_AT_EXIT'] = '1'
+  precommand.unshift('leaks', '-q', '--atExit', '--')
+  runner = ruby
+end
+
 cmd = [runner || ruby]
 if use_yjit_stat
   cmd << '--yjit-stats'
