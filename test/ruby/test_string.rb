@@ -3644,6 +3644,8 @@ CODE
   end
 
   def test_append_bytes_into_utf8
+    assert_equal "123123", "123".append_as_bytes("123")
+
     buf = S("")
     assert_equal Encoding::UTF_8, buf.encoding
 
