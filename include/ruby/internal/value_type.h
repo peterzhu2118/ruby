@@ -246,7 +246,7 @@ rb_type(VALUE obj)
         return RUBY_T_SYMBOL;
     }
     else {
-        RBIMPL_ASSUME(RB_FLONUM_P(obj));
+        RUBY_ASSERT_ALWAYS(RB_FLONUM_P(obj));
         return RUBY_T_FLOAT;
     }
 }
