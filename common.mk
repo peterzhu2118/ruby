@@ -731,7 +731,7 @@ clean-local:: clean-runnable
 	$(Q)$(RM) $(PRISM_BUILD_DIR)/.time $(PRISM_BUILD_DIR)/*/.time yjit_exit_locations.dump
 	-$(Q)$(RMALL) yjit/target
 	-$(Q) $(RMDIR) enc/jis enc/trans enc $(COROUTINE_H:/Context.h=) coroutine yjit \
-	  $(PRISM_BUILD_DIR)/*/ $(PRISM_BUILD_DIR) tmp \
+	  $(PRISM_BUILD_DIR)/*/ $(PRISM_BUILD_DIR) tmp .gc \
 	2> $(NULL) || $(NULLCMD)
 
 bin/clean-runnable:: PHONY
@@ -1940,10 +1940,6 @@ rewindable:
 
 HELP_EXTRA_TASKS = ""
 
-MMTK_BUILD=debug
-MMTK_SRC_PATH=$(srcdir)/gc/mmtk
-MMTK_LIB_PATH=$(srcdir)/gc/mmtk/target/$(MMTK_BUILD)/libmmtk_ruby.$(LIBEXT)
-
 shared-gc: probes.h
 	$(Q) if test -z $(shared_gc_dir); then \
 		echo "You must configure with --with-shared-gc to use shared GC"; \
@@ -1951,19 +1947,12 @@ shared-gc: probes.h
 	elif test -z $(SHARED_GC); then \
 		echo "You must specify SHARED_GC with the GC to build"; \
 		exit 1; \
-	else \
-		$(MAKEDIRS) $(shared_gc_dir); \
-		echo generating $(shared_gc_dir)librubygc.$(SHARED_GC).$(SOEXT); \
-		if [ "$(SHARED_GC)" = "mmtk" ]; then \
-			if test ! -f $(MMTK_LIB_PATH); then \
-				echo "libmmtk_ruby.$(LIBEXT) not found. Please run 'cargo build' inside $(MMTK_SRC_PATH)"; \
-				exit 1; \
-			fi; \
-			$(LDSHARED) -I$(srcdir)/include -I$(srcdir) -I$(arch_hdrdir) $(XDLDFLAGS) $(cflags) -DBUILDING_SHARED_GC -fPIC -o $(shared_gc_dir)librubygc.$(SHARED_GC).$(SOEXT) $(srcdir)/gc/$(SHARED_GC).c $(MMTK_LIB_PATH); \
-		else \
-			$(LDSHARED) -I$(srcdir)/include -I$(srcdir) -I$(arch_hdrdir) $(XDLDFLAGS) $(cflags) -DBUILDING_SHARED_GC -fPIC -o $(shared_gc_dir)librubygc.$(SHARED_GC).$(SOEXT) $(srcdir)/gc/$(SHARED_GC).c; \
-		fi; \
 	fi
+	$(Q) $(MAKEDIRS) $(shared_gc_dir) .gc/$(arch)/$(SHARED_GC)
+	$(Q) $(RUNRUBY) -C .gc/$(arch)/$(SHARED_GC) $(CURDIR)/$(srcdir)/gc/$(SHARED_GC)/$(EXTCONF)
+	$(Q) $(CHDIR) .gc/$(arch)/$(SHARED_GC) && \
+		$(MAKE) extout=../../../$(EXTOUT) BUILTRUBY=../../../miniruby$(EXEEXT) && \
+		$(CP) librubygc.$(SHARED_GC).$(DLEXT) $(shared_gc_dir)
 
 help: PHONY
 	$(MESSAGE_BEGIN) \
@@ -7285,7 +7274,7 @@ gc.$(OBJEXT): $(CCAN_DIR)/str/str.h
 gc.$(OBJEXT): $(hdrdir)/ruby.h
 gc.$(OBJEXT): $(hdrdir)/ruby/ruby.h
 gc.$(OBJEXT): $(hdrdir)/ruby/version.h
-gc.$(OBJEXT): $(top_srcdir)/gc/default.c
+gc.$(OBJEXT): $(top_srcdir)/gc/default/default.c
 gc.$(OBJEXT): $(top_srcdir)/gc/gc.h
 gc.$(OBJEXT): $(top_srcdir)/gc/gc_impl.h
 gc.$(OBJEXT): $(top_srcdir)/internal/array.h
