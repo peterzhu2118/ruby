@@ -1950,6 +1950,7 @@ shared-gc: probes.h
 	fi
 	$(Q) $(MAKEDIRS) $(shared_gc_dir) .gc/$(arch)/$(SHARED_GC)
 	$(Q) $(RUNRUBY) -C .gc/$(arch)/$(SHARED_GC) $(CURDIR)/$(srcdir)/gc/$(SHARED_GC)/$(EXTCONF)
+	$(Q) cat .gc/$(arch)/$(SHARED_GC)/Makefile
 	$(Q) $(CHDIR) .gc/$(arch)/$(SHARED_GC) && \
 		$(MAKE) extout=../../../$(EXTOUT) BUILTRUBY=../../../miniruby$(EXEEXT) && \
 		$(CP) librubygc.$(SHARED_GC).$(DLEXT) $(shared_gc_dir)
