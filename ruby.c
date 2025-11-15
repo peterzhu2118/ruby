@@ -3202,7 +3202,6 @@ ruby_process_options(int argc, char **argv)
 
     if (getenv("RUBY_FREE_AT_EXIT")) {
         rb_free_at_exit = true;
-        rb_category_warn(RB_WARN_CATEGORY_EXPERIMENTAL, "Free at exit is experimental and may be unstable");
     }
 
     iseq = process_options(argc, argv, cmdline_options_init(&opt));
