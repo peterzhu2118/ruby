@@ -291,11 +291,11 @@ ractor_free(void *ptr)
     rb_hook_list_free(&r->pub.hooks);
     rb_st_free_embedded_table(&r->pub.targeted_hooks);
 
-    if (r->newobj_cache) {
+    if (r->gc_cache) {
         RUBY_ASSERT(r == ruby_single_main_ractor);
 
-        rb_gc_ractor_cache_free(r->newobj_cache);
-        r->newobj_cache = NULL;
+        rb_gc_ractor_gc_cache_free(r->gc_cache);
+        r->gc_cache = NULL;
     }
 
     ractor_sync_free(r);
@@ -382,11 +382,11 @@ vm_insert_ractor0(rb_vm_t *vm, rb_ractor_t *r, bool single_ractor_mode)
     ccan_list_add_tail(&vm->ractor.set, &r->vmlr_node);
     vm->ractor.cnt++;
 
-    if (r->newobj_cache) {
+    if (r->gc_cache) {
         VM_ASSERT(r == ruby_single_main_ractor);
     }
     else {
-        r->newobj_cache = rb_gc_ractor_cache_alloc(r);
+        r->gc_cache = rb_gc_ractor_gc_cache_init(r);
     }
 }
 
@@ -448,8 +448,8 @@ vm_remove_ractor(rb_vm_t *vm, rb_ractor_t *cr)
         }
         vm->ractor.cnt--;
 
-        rb_gc_ractor_cache_free(cr->newobj_cache);
-        cr->newobj_cache = NULL;
+        rb_gc_ractor_gc_cache_free(cr->gc_cache);
+        cr->gc_cache = NULL;
 
         ractor_status_set(cr, ractor_terminated);
     }
@@ -481,7 +481,7 @@ rb_ractor_t *
 rb_ractor_main_alloc(void)
 {
     rb_ractor_t *r = &_main_ractor;
-    r->newobj_cache = rb_gc_ractor_cache_alloc(r);
+    r->gc_cache = rb_gc_ractor_gc_cache_init(r);
     ruby_single_main_ractor = r;
 
     return r;
@@ -509,8 +509,8 @@ rb_ractor_atfork(rb_vm_t *vm, rb_thread_t *th)
 void
 rb_ractor_terminate_atfork(rb_vm_t *vm, rb_ractor_t *r)
 {
-    rb_gc_ractor_cache_free(r->newobj_cache);
-    r->newobj_cache = NULL;
+    rb_gc_ractor_gc_cache_free(r->gc_cache);
+    r->gc_cache = NULL;
     r->status_ = ractor_terminated;
     ractor_sync_terminate_atfork(vm, r);
 }

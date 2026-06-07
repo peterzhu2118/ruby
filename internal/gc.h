@@ -16,6 +16,9 @@
 #include "ruby/ruby.h"          /* for rb_event_flag_t */
 #include "vm_core.h"            /* for GET_EC() */
 
+/* Defined in gc/gc.h; used here only through pointers. */
+struct rb_ractor_gc_cache;
+
 #ifndef USE_MODULAR_GC
 # define USE_MODULAR_GC 0
 #endif
@@ -201,8 +204,11 @@ void rb_gc_obj_id_moved(VALUE obj);
 void rb_gc_register_pinning_obj(VALUE obj);
 rb_execution_context_t *rb_gc_get_ec(void);
 
-void *rb_gc_ractor_cache_alloc(rb_ractor_t *ractor);
-void rb_gc_ractor_cache_free(void *cache);
+struct rb_ractor_gc_cache *rb_gc_ractor_gc_cache_init(rb_ractor_t *ractor);
+void rb_gc_ractor_gc_cache_free(struct rb_ractor_gc_cache *gc_cache);
+VALUE rb_gc_new_obj_bump_pointer_miss(struct rb_ractor_gc_cache *gc_cache, size_t heap_idx);
+void rb_gc_zjit_newobj_hook(VALUE obj);
+const size_t *rb_gc_zjit_bump_slot_sizes(void);
 
 bool rb_gc_size_allocatable_p(size_t size);
 size_t *rb_gc_heap_sizes(void);

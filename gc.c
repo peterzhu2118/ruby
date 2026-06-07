@@ -188,7 +188,7 @@ rb_gc_vm_barrier(void)
 void *
 rb_gc_get_ractor_newobj_cache(void)
 {
-    return GET_RACTOR()->newobj_cache;
+    return GET_RACTOR()->gc_cache;
 }
 
 void
@@ -255,11 +255,11 @@ rb_gc_ractor_newobj_cache_foreach(void (*func)(void *cache, void *data), void *d
                     ccan_list_tail(&GET_VM()->ractor.set, rb_ractor_t, vmlr_node) == ruby_single_main_ractor)
         );
 
-        func(ruby_single_main_ractor->newobj_cache, data);
+        func(ruby_single_main_ractor->gc_cache, data);
     }
     else {
         ccan_list_for_each(&GET_VM()->ractor.set, r, vmlr_node) {
-            func(r->newobj_cache, data);
+            func(r->gc_cache, data);
         }
     }
 }
@@ -590,14 +590,14 @@ typedef struct gc_function_map {
     // Bootup
     void *(*objspace_alloc)(void);
     void (*objspace_init)(void *objspace_ptr);
-    void *(*ractor_cache_alloc)(void *objspace_ptr, void *ractor);
+    struct rb_ractor_gc_cache *(*ractor_gc_cache_init)(void *objspace_ptr, void *ractor);
     void (*set_params)(void *objspace_ptr);
     void (*init)(void);
     size_t *(*heap_sizes)(void *objspace_ptr);
     // Shutdown
     void (*shutdown_free_objects)(void *objspace_ptr);
     void (*objspace_free)(void *objspace_ptr);
-    void (*ractor_cache_free)(void *objspace_ptr, void *cache);
+    void (*ractor_gc_cache_free)(void *objspace_ptr, struct rb_ractor_gc_cache *gc_cache);
     // GC
     void (*start)(void *objspace_ptr, bool full_mark, bool immediate_mark, bool immediate_sweep, bool compact);
     bool (*during_gc_p)(void *objspace_ptr);
@@ -612,6 +612,8 @@ typedef struct gc_function_map {
     struct rb_gc_vm_context *(*get_vm_context)(void *objspace_ptr);
     // Object allocation
     VALUE (*new_obj)(void *objspace_ptr, void *cache_ptr, VALUE klass, VALUE flags, bool wb_protected, size_t alloc_size);
+    VALUE (*new_obj_bump_pointer_miss)(void *objspace_ptr, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx);
+    const size_t *(*zjit_bump_slot_sizes)(void *objspace_ptr);
     size_t (*obj_slot_size)(VALUE obj);
     size_t (*heap_id_for_size)(void *objspace_ptr, size_t size);
     bool (*size_allocatable_p)(size_t size);
@@ -769,14 +771,14 @@ ruby_modular_gc_init(void)
     // Bootup
     load_modular_gc_func(objspace_alloc);
     load_modular_gc_func(objspace_init);
-    load_modular_gc_func(ractor_cache_alloc);
+    load_modular_gc_func(ractor_gc_cache_init);
     load_modular_gc_func(set_params);
     load_modular_gc_func(init);
     load_modular_gc_func(heap_sizes);
     // Shutdown
     load_modular_gc_func(shutdown_free_objects);
     load_modular_gc_func(objspace_free);
-    load_modular_gc_func(ractor_cache_free);
+    load_modular_gc_func(ractor_gc_cache_free);
     // GC
     load_modular_gc_func(start);
     load_modular_gc_func(during_gc_p);
@@ -791,6 +793,8 @@ ruby_modular_gc_init(void)
     load_modular_gc_func(get_vm_context);
     // Object allocation
     load_modular_gc_func(new_obj);
+    load_modular_gc_func(new_obj_bump_pointer_miss);
+    load_modular_gc_func(zjit_bump_slot_sizes);
     load_modular_gc_func(obj_slot_size);
     load_modular_gc_func(heap_id_for_size);
     load_modular_gc_func(size_allocatable_p);
@@ -857,14 +861,14 @@ ruby_modular_gc_init(void)
 // Bootup
 # define rb_gc_impl_objspace_alloc rb_gc_functions.objspace_alloc
 # define rb_gc_impl_objspace_init rb_gc_functions.objspace_init
-# define rb_gc_impl_ractor_cache_alloc rb_gc_functions.ractor_cache_alloc
+# define rb_gc_impl_ractor_gc_cache_init rb_gc_functions.ractor_gc_cache_init
 # define rb_gc_impl_set_params rb_gc_functions.set_params
 # define rb_gc_impl_init rb_gc_functions.init
 # define rb_gc_impl_heap_sizes rb_gc_functions.heap_sizes
 // Shutdown
 # define rb_gc_impl_shutdown_free_objects rb_gc_functions.shutdown_free_objects
 # define rb_gc_impl_objspace_free rb_gc_functions.objspace_free
-# define rb_gc_impl_ractor_cache_free rb_gc_functions.ractor_cache_free
+# define rb_gc_impl_ractor_gc_cache_free rb_gc_functions.ractor_gc_cache_free
 // GC
 # define rb_gc_impl_start rb_gc_functions.start
 # define rb_gc_impl_during_gc_p rb_gc_functions.during_gc_p
@@ -879,6 +883,8 @@ ruby_modular_gc_init(void)
 # define rb_gc_impl_get_vm_context rb_gc_functions.get_vm_context
 // Object allocation
 # define rb_gc_impl_new_obj rb_gc_functions.new_obj
+# define rb_gc_impl_new_obj_bump_pointer_miss rb_gc_functions.new_obj_bump_pointer_miss
+# define rb_gc_impl_zjit_bump_slot_sizes rb_gc_functions.zjit_bump_slot_sizes
 # define rb_gc_impl_obj_slot_size rb_gc_functions.obj_slot_size
 # define rb_gc_impl_heap_id_for_size rb_gc_functions.heap_id_for_size
 # define rb_gc_impl_size_allocatable_p rb_gc_functions.size_allocatable_p
@@ -1022,7 +1028,7 @@ rb_newobj(rb_execution_context_t *ec, VALUE klass, VALUE flags, shape_id_t shape
 {
     GC_ASSERT((flags & FL_WB_PROTECTED) == 0);
     rb_ractor_t *cr = rb_ec_ractor_ptr(ec);
-    VALUE obj = rb_gc_impl_new_obj(rb_gc_get_objspace(), cr->newobj_cache, klass, flags, wb_protected, size);
+    VALUE obj = rb_gc_impl_new_obj(rb_gc_get_objspace(), cr->gc_cache, klass, flags, wb_protected, size);
 
 #if RACTOR_CHECK_MODE
     void rb_ractor_setup_belonging(VALUE obj);
@@ -3696,16 +3702,61 @@ rb_gc_object_metadata(VALUE obj)
 
 /* GC */
 
-void *
-rb_gc_ractor_cache_alloc(rb_ractor_t *ractor)
+struct rb_ractor_gc_cache *
+rb_gc_ractor_gc_cache_init(rb_ractor_t *ractor)
 {
-    return rb_gc_impl_ractor_cache_alloc(rb_gc_get_objspace(), ractor);
+    return rb_gc_impl_ractor_gc_cache_init(rb_gc_get_objspace(), ractor);
 }
 
 void
-rb_gc_ractor_cache_free(void *cache)
+rb_gc_ractor_gc_cache_free(struct rb_ractor_gc_cache *gc_cache)
 {
-    rb_gc_impl_ractor_cache_free(rb_gc_get_objspace(), cache);
+    rb_gc_impl_ractor_gc_cache_free(rb_gc_get_objspace(), gc_cache);
+}
+
+/* Slow path for the JIT's inline bump-pointer fast path. Public wrapper so the
+ * JIT can call into the (possibly static, possibly modular) GC implementation.
+ * Returns a raw, uninitialized cell; the caller writes the object header. */
+VALUE
+rb_gc_new_obj_bump_pointer_miss(struct rb_ractor_gc_cache *gc_cache, size_t heap_idx)
+{
+    return rb_gc_impl_new_obj_bump_pointer_miss(rb_gc_get_objspace(), gc_cache, heap_idx);
+}
+
+/* Fire RUBY_INTERNAL_EVENT_NEWOBJ for an object the JIT allocated and
+ * initialized through its inline bump-pointer path, which bypasses rb_newobj
+ * where the hook normally fires. The JIT calls this after writing the object
+ * header. It is a no-op unless allocation tracing is enabled: the GC keeps the
+ * JIT's inline fast path from running while NEWOBJ tracing is on (by exhausting
+ * the bump cursor), so the JIT only reaches this through its slow (cursor-miss)
+ * path -- mirroring how rb_newobj fires the hook on the interpreter's path. */
+void
+rb_gc_zjit_newobj_hook(VALUE obj)
+{
+    if (UNLIKELY(rb_gc_event_hook_required_p(RUBY_INTERNAL_EVENT_NEWOBJ))) {
+        gc_newobj_hook(obj);
+    }
+}
+
+/* Compile-time query for the JIT: return the GC-global bump-heap slot-size
+ * strides (ascending order, terminated by a 0 sentinel), indexed identically to
+ * any ractor's `bump_heaps`, so the JIT can pick a size class itself. Returns
+ * NULL when the JIT must not inline the allocation fast path and should fall
+ * back to a normal allocation call: in builds that do extra per-allocation work
+ * the JIT cannot replicate (poisoning under sanitizers, slot zero/fill and
+ * asserts under RGENGC_CHECK_MODE, the object->ractor map under
+ * RACTOR_CHECK_MODE), or when the GC publishes no bump heaps (MMTk, wbcheck).
+ *
+ * The strides are an invariant of the GC, not of any one ractor, so it is safe
+ * for the JIT to bake them at compile time even though the ractor that compiles
+ * the code may not be the ractor that later runs it. The cursor itself is still
+ * loaded from the running ractor at runtime. The interpreter and the JIT share
+ * the same per-ractor cursor, so the JIT's inlined bump path must otherwise be
+ * byte-for-byte equivalent to the GC's fast path. */
+const size_t *
+rb_gc_zjit_bump_slot_sizes(void)
+{
+    return rb_gc_impl_zjit_bump_slot_sizes(rb_gc_get_objspace());
 }
 
 void

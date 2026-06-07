@@ -127,6 +127,30 @@ unsafe extern "C" {
         ci: *const rb_callinfo,
     ) -> *const rb_callable_method_entry_t;
 
+    /// Return the GC-global bump-heap slot-size strides (ascending order,
+    /// terminated by a 0 sentinel), indexed identically to a ractor's bump-heap
+    /// array, so the JIT can pick a size class itself; the JIT computes the cursor
+    /// offsets from the bump-heap struct layout (see `gc_fast_path_new_obj`). These
+    /// strides are a GC-global invariant, so the JIT may bake the chosen index and
+    /// stride at compile time even though the compiling ractor may differ from the
+    /// running one (the cursor itself is still loaded at runtime). Returns null when
+    /// the JIT must not inline the allocation (MMTk/wbcheck, debug/sanitizer
+    /// builds), in which case it falls back to a normal allocation.
+    pub fn rb_gc_zjit_bump_slot_sizes() -> *const usize;
+
+    /// Slow path for the JIT's inline bump allocation: refills the cursor (moving
+    /// to the next region/page or running GC) and returns a raw, uninitialized
+    /// cell. The caller writes the object header.
+    pub fn rb_gc_new_obj_bump_pointer_miss(gc_cache: *mut std::ffi::c_void, heap_idx: usize) -> VALUE;
+
+    /// Fire RUBY_INTERNAL_EVENT_NEWOBJ for an object the JIT allocated and
+    /// initialized through its inline path (which bypasses the interpreter's
+    /// allocation routine where the hook would otherwise fire). A no-op unless
+    /// allocation tracing is enabled; the GC keeps the JIT off the inline fast
+    /// path while tracing is on, so this is only ever reached via the slow
+    /// (cursor-miss) path. Must be called after the object header is written.
+    pub fn rb_gc_zjit_newobj_hook(obj: VALUE);
+
     // Floats within range will be encoded without creating objects in the heap.
     // (Range is 0x3000000000000001 to 0x4fffffffffffffff (1.7272337110188893E-77 to 2.3158417847463237E+77).
     pub fn rb_float_new(d: f64) -> VALUE;

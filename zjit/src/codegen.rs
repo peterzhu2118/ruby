@@ -1841,9 +1841,124 @@ fn gen_array_dup(
     asm_ccall!(asm, rb_ary_resurrect, val)
 }
 
+/// Emit an inline bump-pointer allocation for a single object of `alloc_size`
+/// bytes, sharing the current ractor's allocation cursor exactly as the
+/// interpreter's fast path does. On the fast path the new cell's `RBasic` header
+/// is initialized with `flags` and `klass`.
+///
+/// On a cursor miss -- or when the GC publishes no usable bump heap for that size
+/// (MMTk/wbcheck, debug/sanitizer builds, or no fitting size class) -- `slow_path`
+/// is invoked to emit a normal allocation and return the resulting VALUE. That
+/// fallback must fully allocate and initialize the object (and fire the NEWOBJ
+/// hook) itself. Returns the allocated VALUE.
+///
+/// The caller must have already issued `gen_prepare_leaf_call_with_gc`, since
+/// `slow_path` calls into C and may run GC.
+fn gc_fast_path_new_obj(
+    jit: &mut JITState,
+    asm: &mut Assembler,
+    alloc_size: usize,
+    flags: u64,
+    klass: VALUE,
+    slow_path: impl Fn(&mut Assembler) -> lir::Opnd,
+) -> lir::Opnd {
+    // Pick the bump heap (size class) that serves an object of this size by
+    // scanning the GC-global slot-size strides: ascending order, terminated by a
+    // 0 sentinel, indexed identically to a ractor's bump-heap array. These strides
+    // are a GC-global invariant (not per-ractor state), so it is safe to bake the
+    // chosen index and stride into the compiled code even though the ractor that
+    // runs it may differ from the one that compiled it; only the cursor itself is
+    // loaded from the running ractor below. We compute the cursor offsets ourselves
+    // from the bump-heap struct layout; everything else (the
+    // EC->thread->ractor->gc_cache chain) comes from the regular bindings. The
+    // array is null when this build can't inline the GC's allocation fast path
+    // (MMTk/wbcheck, debug/sanitizer builds); fall back then.
+    let slot_sizes = unsafe { rb_gc_zjit_bump_slot_sizes() };
+    if slot_sizes.is_null() {
+        return slow_path(asm);
+    }
+    let mut heap_idx = 0;
+    let slot_size = loop {
+        let stride = unsafe { *slot_sizes.add(heap_idx) };
+        if stride == 0 {
+            // Reached the sentinel without a fit: no size class is big enough.
+            return slow_path(asm);
+        }
+        if alloc_size <= stride {
+            break stride;
+        }
+        heap_idx += 1;
+    };
+
+    // Byte offsets from the gc_cache pointer to this heap's cursor and the JIT's
+    // cursor-end, derived from the GC-agnostic bump-heap struct layout.
+    let bump_base = std::mem::offset_of!(rb_ractor_gc_cache, bump_heaps)
+        + heap_idx * std::mem::size_of::<gc_bump_pointer_heap>();
+    let cursor_offset = (bump_base + std::mem::offset_of!(gc_bump_pointer_heap, cursor)) as i32;
+    let cursor_end_offset = (bump_base + std::mem::offset_of!(gc_bump_pointer_heap, jit_cursor_end)) as i32;
+
+    asm_comment!(asm, "inline bump-pointer allocation");
+
+    let hir_block_id = asm.current_block().hir_block_id;
+    let rpo_idx = asm.current_block().rpo_index;
+
+    // Blocks that all paths converge into / branch out to. The allocated VALUE
+    // flows into `result_block` as a block parameter (phi).
+    let result_block = asm.new_block(hir_block_id, false, rpo_idx);
+    let miss_block = asm.new_block(hir_block_id, false, rpo_idx);
+
+    let result_edge = |v: Opnd| Target::Block(lir::BranchEdge { target: result_block, args: vec![v] });
+
+    // Load the current ractor's bump cursor via EC -> thread -> ractor -> gc_cache.
+    // The cursor is always read from the running ractor; never baked in, since
+    // JIT code is shared across ractors.
+    let thread = asm.load(Opnd::mem(64, EC, RUBY_OFFSET_EC_THREAD_PTR as i32));
+    let ractor = asm.load(Opnd::mem(64, thread, RUBY_OFFSET_THREAD_RACTOR as i32));
+    let gc_cache = asm.load(Opnd::mem(64, ractor, RUBY_OFFSET_RACTOR_GC_CACHE as i32));
+    let cursor = asm.load(Opnd::mem(64, gc_cache, cursor_offset));
+    let cursor_end = asm.load(Opnd::mem(64, gc_cache, cursor_end_offset));
+    let new_cursor = asm.add(cursor, Opnd::UImm(slot_size as u64));
+
+    // Miss when the slot would overrun the window: cursor + slot_size > cursor_end.
+    // Heap addresses are positive, so the signed test cursor_end < new_cursor is exact.
+    //
+    // The inline fast path never fires RUBY_INTERNAL_EVENT_NEWOBJ. Rather than
+    // test the event flag here, the GC keeps every ractor's cursor exhausted
+    // while NEWOBJ tracing is enabled (see rb_gc_impl_set_event_hook and
+    // newobj_bump_pointer_miss in gc/default/default.c), so this branch is always
+    // taken in that state and the miss path below takes the slow path (which fires
+    // the hook).
+    asm.cmp(cursor_end, new_cursor);
+    asm.jl(jit, Target::Block(lir::BranchEdge { target: miss_block, args: vec![] }));
+
+    // Fast path: commit the advanced cursor, initialize the object's RBasic
+    // header, and use the old cursor as the object.
+    asm.store(Opnd::mem(64, gc_cache, cursor_offset), new_cursor);
+    asm.store(Opnd::mem(VALUE_BITS, cursor, RUBY_OFFSET_RBASIC_FLAGS), VALUE(flags as usize).into());
+    asm.store(Opnd::mem(VALUE_BITS, cursor, RUBY_OFFSET_RBASIC_KLASS), klass.into());
+    asm.jmp(result_edge(cursor));
+
+    // Miss: the cursor is exhausted (or NEWOBJ tracing kept it exhausted to route
+    // us here). Fall back to the caller's normal allocation, which allocates,
+    // initializes, and fires the NEWOBJ hook itself.
+    asm.set_current_block(miss_block);
+    let label = jit.get_label(asm, miss_block, hir_block_id);
+    asm.write_label(label);
+    let obj = slow_path(asm);
+    asm.jmp(result_edge(obj));
+
+    // Convergence: receive the allocated VALUE from whichever path ran.
+    asm.set_current_block(result_block);
+    let label = jit.get_label(asm, result_block, hir_block_id);
+    asm.write_label(label);
+    let param = asm.new_block_param(VALUE_BITS);
+    asm.current_block().add_parameter(param);
+    param
+}
+
 /// Compile a new array instruction
 fn gen_new_array(
-    jit: &JITState,
+    jit: &mut JITState,
     asm: &mut Assembler,
     elements: Vec<Opnd>,
     state: &FrameState,
@@ -1852,12 +1967,31 @@ fn gen_new_array(
 
     let num: c_long = elements.len().try_into().expect("Unable to fit length of elements into c_long");
 
-    if elements.is_empty() {
-        asm_ccall!(asm, rb_ec_ary_new_from_values, EC, 0i64.into(), Opnd::UImm(0))
-    } else {
+    if !elements.is_empty() {
         let argv = gen_push_opnds(jit, asm, &elements);
-        asm_ccall!(asm, rb_ec_ary_new_from_values, EC, num.into(), argv)
+        return asm_ccall!(asm, rb_ec_ary_new_from_values, EC, num.into(), argv);
     }
+
+    // Empty array: try to inline the allocation. An empty array is an embedded
+    // RArray, so its byte size is the RArray header clamped up to the full struct
+    // size (matching the C side's max(offsetof(RArray, as.ary), sizeof(RArray))).
+    let alloc_size = std::cmp::max(RUBY_OFFSET_RARRAY_AS_ARY as usize, std::mem::size_of::<RArray>());
+
+    // The empty-array header, identical to what rb_newobj produces: an embedded
+    // array of length 0 (T_ARRAY | RARRAY_EMBED_FLAG) of class Array, with the
+    // root shape's "other" layout packed into the high bits of flags. ZJIT is
+    // 64-bit only, so the shape always lives in flags (ROOT_SHAPE_ID is 0).
+    let flags = (RUBY_T_ARRAY as u64)
+        | (RARRAY_EMBED_FLAG as u64)
+        | ((SHAPE_ID_LAYOUT_OTHER as u64) << RB_SHAPE_FLAG_SHIFT as u64);
+    let klass = unsafe { rb_cArray };
+
+    // On a cursor miss (or when the GC can't inline the allocation), fall back to
+    // the normal C allocation, which allocates the empty array and fires the
+    // NEWOBJ hook itself.
+    gc_fast_path_new_obj(jit, asm, alloc_size, flags, klass, |asm| {
+        asm_ccall!(asm, rb_ec_ary_new_from_values, EC, 0i64.into(), Opnd::UImm(0))
+    })
 }
 
 /// Adjust potentially-negative index by the given length, returning the adjusted index. If still negative,

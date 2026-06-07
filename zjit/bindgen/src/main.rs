@@ -53,6 +53,9 @@ fn main() {
         .header(src_root.join(c_file).to_str().unwrap())
         .header(src_root.join("jit.c").to_str().unwrap())
 
+        // GC-agnostic bump-pointer allocation structs shared with the JIT
+        .header(src_root.join("gc/gc_impl.h").to_str().unwrap())
+
         // Don't want to copy over C comment
         .generate_comments(false)
 
@@ -82,6 +85,13 @@ fn main() {
 
         // This struct is public to Ruby C extensions
         .allowlist_type("RBasic")
+
+        // For inlining bump-pointer allocation: RArray for its size, and the
+        // GC-agnostic bump-heap structs so the JIT can compute the cursor offsets
+        // itself (offset_of!/size_of) instead of asking the GC for them.
+        .allowlist_type("RArray")
+        .allowlist_type("gc_bump_pointer_heap")
+        .allowlist_type("rb_ractor_gc_cache")
 
         .allowlist_type("ruby_rstring_flags")
         .allowlist_type("rbimpl_typeddata_flags")

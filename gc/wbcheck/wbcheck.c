@@ -477,10 +477,32 @@ rb_gc_impl_objspace_init(void *objspace_ptr)
     objspace->finalizer_postponed_job = rb_postponed_job_preregister(0, gc_run_finalizers, objspace);
 }
 
-void *
-rb_gc_impl_ractor_cache_alloc(void *objspace_ptr, void *ractor)
+struct rb_ractor_gc_cache *
+rb_gc_impl_ractor_gc_cache_init(void *objspace_ptr, void *ractor)
 {
-    // Stub implementation
+    /* wbcheck has no bump-pointer allocator, so publish a cache with only the
+     * sentinel bump heap. ZJIT-inlined allocation sees no usable bump heap and
+     * falls back to the C allocation path. */
+    struct rb_ractor_gc_cache *gc_cache =
+        calloc(1, sizeof(struct rb_ractor_gc_cache) + sizeof(struct gc_bump_pointer_heap));
+    gc_cache->gc_private = NULL;
+    gc_cache->bump_heaps[0].slot_size = 0; /* sentinel */
+
+    return gc_cache;
+}
+
+VALUE
+rb_gc_impl_new_obj_bump_pointer_miss(void *objspace_ptr, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx)
+{
+    /* wbcheck publishes only the sentinel bump heap, so ZJIT never inlines bump
+     * allocation against it and this choke point is unreachable. */
+    rb_bug("rb_gc_impl_new_obj_bump_pointer_miss: unreachable for wbcheck");
+}
+
+const size_t *
+rb_gc_impl_zjit_bump_slot_sizes(void *objspace_ptr)
+{
+    /* wbcheck publishes no bump heaps, so the JIT must not inline bump allocation. */
     return NULL;
 }
 
@@ -542,9 +564,9 @@ rb_gc_impl_objspace_free(void *objspace_ptr)
 }
 
 void
-rb_gc_impl_ractor_cache_free(void *objspace_ptr, void *cache)
+rb_gc_impl_ractor_gc_cache_free(void *objspace_ptr, struct rb_ractor_gc_cache *gc_cache)
 {
-    // Stub implementation
+    free(gc_cache);
 }
 
 // GC

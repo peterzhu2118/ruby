@@ -105,7 +105,7 @@ struct rb_ractor_struct {
 
     bool malloc_gc_disabled;
     bool main_ractor;
-    void *newobj_cache;
+    struct rb_ractor_gc_cache *gc_cache;
 }; // rb_ractor_t is defined in vm_core.h
 
 enum ractor_wakeup_status {

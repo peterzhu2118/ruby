@@ -23,13 +23,19 @@
 #include "iseq.h"
 #include "ruby/debug.h"
 #include "internal/cont.h"
+#include "ractor_core.h"
 
 // This build config impacts the pointer tagging scheme and we only want to
 // support one scheme for simplicity.
 STATIC_ASSERT(pointer_tagging_scheme, USE_FLONUM);
 
 enum zjit_struct_offsets {
-    ISEQ_BODY_OFFSET_PARAM = offsetof(struct rb_iseq_constant_body, param)
+    ISEQ_BODY_OFFSET_PARAM = offsetof(struct rb_iseq_constant_body, param),
+
+    // For ZJIT's inline allocation fast path, which walks
+    // EC -> thread -> ractor -> gc_cache at runtime to reach the bump cursor.
+    RUBY_OFFSET_THREAD_RACTOR = offsetof(rb_thread_t, ractor),
+    RUBY_OFFSET_RACTOR_GC_CACHE = offsetof(rb_ractor_t, gc_cache),
 };
 
 // Special JITFrame used by all C method calls. We don't control the native

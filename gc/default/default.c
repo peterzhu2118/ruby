@@ -197,18 +197,36 @@ static RB_THREAD_LOCAL_SPECIFIER int malloc_increase_local;
     SLOT(32) SLOT(64) SLOT(128) SLOT(256) SLOT(512)
 #endif
 
+/* GC-private per-size-class bookkeeping. The actual bump cursor lives in the
+ * shared `struct gc_bump_pointer_heap` (rb_ractor_gc_cache::bump_heaps), so it
+ * can be advanced by both the interpreter and the inlined JIT fast path. This
+ * struct holds the GC-only state needed to refill that cursor:
+ *
+ *  - next_region / using_page: the free-region chain feeding the cursor.
+ *  - region_end: the real exclusive end of the current region. During
+ *    incremental marking the shared cursor_end is capped to a smaller window so
+ *    that allocation re-enters the miss path frequently enough to run mark
+ *    steps; region_end remembers where the region actually ends.
+ *
+ * Allocation counts are derived from cursor movement (bump_heap.region_start)
+ * rather than a per-allocation counter, since the JIT bumps the cursor without
+ * running any counting code. */
 typedef struct ractor_newobj_heap_cache {
-    uintptr_t cursor;
-    uintptr_t cursor_end;
     struct free_region *next_region;
     struct heap_page *using_page;
-    size_t allocated_objects_count;
+    uintptr_t region_end;
 } rb_ractor_newobj_heap_cache_t;
 
 typedef struct ractor_newobj_cache {
     size_t incremental_mark_step_allocated_slots;
     rb_ractor_newobj_heap_cache_t heap_caches[HEAP_COUNT];
 } rb_ractor_newobj_cache_t;
+
+static inline rb_ractor_newobj_cache_t *
+gc_cache_private(struct rb_ractor_gc_cache *gc_cache)
+{
+    return (rb_ractor_newobj_cache_t *)gc_cache->gc_private;
+}
 
 typedef struct {
     size_t heap_init_bytes;
@@ -1712,11 +1730,37 @@ calloc1(size_t n)
     return calloc(1, n);
 }
 
+/* Sync every ractor's jit_cursor_end to the current NEWOBJ-tracing state (passed
+ * as a bool via data): held at the cursor (empty window) while tracing is on so
+ * the JIT's inlined fast path -- which cannot fire RUBY_INTERNAL_EVENT_NEWOBJ --
+ * always misses into the slow path where the hook runs, and restored to the
+ * interpreter window when tracing is off. The interpreter's cursor_end is never
+ * touched, so toggling tracing does not perturb interpreter GC scheduling. */
+static void
+gc_ractor_jit_cursor_sync(void *c, void *data)
+{
+    struct rb_ractor_gc_cache *gc_cache = c;
+    bool tracing = (bool)(uintptr_t)data;
+
+    for (size_t heap_idx = 0; heap_idx < HEAP_COUNT; heap_idx++) {
+        struct gc_bump_pointer_heap *bump = &gc_cache->bump_heaps[heap_idx];
+        bump->jit_cursor_end = tracing ? bump->cursor : bump->cursor_end;
+    }
+}
+
 void
 rb_gc_impl_set_event_hook(void *objspace_ptr, const rb_event_flag_t event)
 {
     rb_objspace_t *objspace = objspace_ptr;
+    rb_event_flag_t old_events = objspace->hook_events;
     objspace->hook_events = event & RUBY_INTERNAL_EVENT_OBJSPACE_MASK;
+
+    bool was_tracing = old_events & RUBY_INTERNAL_EVENT_NEWOBJ;
+    bool now_tracing = objspace->hook_events & RUBY_INTERNAL_EVENT_NEWOBJ;
+    if (was_tracing != now_tracing) {
+        rb_gc_ractor_newobj_cache_foreach(gc_ractor_jit_cursor_sync,
+                                          (void *)(uintptr_t)now_tracing);
+    }
 }
 
 unsigned long long
@@ -2424,22 +2468,65 @@ rb_gc_impl_size_allocatable_p(size_t size)
     return size + RVALUE_OVERHEAD <= pool_slot_sizes[HEAP_COUNT - 1];
 }
 
-static const size_t ALLOCATED_COUNT_STEP = 1024;
-static void
-ractor_cache_flush_count(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache)
+/* Add the slots consumed since the last flush (region_start..cursor) to the
+ * heap's running total of allocated objects, then advance the count base. The
+ * count is derived from cursor movement because the inlined JIT fast path bumps
+ * the cursor without running any per-allocation counting code. */
+static inline void
+gc_bump_flush_alloc_count(struct gc_bump_pointer_heap *bump, rb_heap_t *heap)
 {
-    for (int heap_idx = 0; heap_idx < HEAP_COUNT; heap_idx++) {
-        rb_ractor_newobj_heap_cache_t *heap_cache = &cache->heap_caches[heap_idx];
+    if (bump->slot_size == 0) return;
 
-        rb_heap_t *heap = &heaps[heap_idx];
-        RUBY_ATOMIC_SIZE_ADD(heap->total_allocated_objects, heap_cache->allocated_objects_count);
-        heap_cache->allocated_objects_count = 0;
+    size_t n = (bump->cursor - bump->region_start) / bump->slot_size;
+    if (n > 0) {
+        RUBY_ATOMIC_SIZE_ADD(heap->total_allocated_objects, n);
+        bump->region_start = bump->cursor;
     }
 }
 
-static inline bool
-ractor_cache_advance_region(rb_ractor_newobj_heap_cache_t *heap_cache)
+static void
+ractor_cache_flush_count(rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache)
 {
+    for (int heap_idx = 0; heap_idx < HEAP_COUNT; heap_idx++) {
+        gc_bump_flush_alloc_count(&gc_cache->bump_heaps[heap_idx], &heaps[heap_idx]);
+    }
+}
+
+/* Open an allocation window at the current cursor. Outside incremental marking
+ * the window spans the whole current region. During incremental marking it is
+ * capped to INCREMENTAL_MARK_STEP_ALLOCATIONS slots so the cursor is exhausted
+ * (re-entering the miss path to run a mark step) before too many objects are
+ * allocated. Because the interpreter and the JIT share this cursor, capping
+ * cursor_end throttles both uniformly.
+ *
+ * jit_cursor_end mirrors cursor_end except while NEWOBJ allocation tracing is
+ * enabled, when it is held at the cursor (an empty window) so the JIT's inlined
+ * fast path always misses into the slow path (where the hook fires) while the
+ * interpreter window is left intact. */
+static inline void
+ractor_cache_open_window(rb_objspace_t *objspace, struct gc_bump_pointer_heap *bump,
+                         rb_ractor_newobj_heap_cache_t *heap_cache)
+{
+    uintptr_t end = heap_cache->region_end;
+
+    if (RB_UNLIKELY(is_incremental_marking(objspace))) {
+        uintptr_t window_end = bump->cursor + INCREMENTAL_MARK_STEP_ALLOCATIONS * bump->slot_size;
+        if (window_end < end) end = window_end;
+    }
+
+    bump->cursor_end = end;
+    bump->jit_cursor_end =
+        RB_UNLIKELY(objspace->hook_events & RUBY_INTERNAL_EVENT_NEWOBJ) ? bump->cursor : end;
+}
+
+/* Move the cursor to the next free region of the current page, if any, flushing
+ * the count of the abandoned region and opening a fresh window. */
+static inline bool
+ractor_cache_advance_region(rb_objspace_t *objspace, struct gc_bump_pointer_heap *bump,
+                            rb_ractor_newobj_heap_cache_t *heap_cache, rb_heap_t *heap)
+{
+    gc_bump_flush_alloc_count(bump, heap);
+
     struct free_region *region = heap_cache->next_region;
     if (region == NULL) {
         return false;
@@ -2447,47 +2534,45 @@ ractor_cache_advance_region(rb_ractor_newobj_heap_cache_t *heap_cache)
 
     rb_asan_unpoison_object((VALUE)region, false);
     GC_ASSERT(RB_TYPE_P((VALUE)region, T_NONE));
-    heap_cache->cursor = (uintptr_t)region;
-    heap_cache->cursor_end = region->end;
+    bump->cursor = (uintptr_t)region;
+    bump->region_start = (uintptr_t)region;
+    heap_cache->region_end = region->end;
     heap_cache->next_region = region->next;
     rb_asan_poison_object((VALUE)region);
+
+    ractor_cache_open_window(objspace, bump, heap_cache);
 
     return true;
 }
 
+/* The interpreter's fast path. This is exactly the sequence the JIT inlines: a
+ * pure bump against the shared cursor. When the window is exhausted it returns
+ * Qfalse so the caller routes to the miss path; the one exception is that, when
+ * not incrementally marking, it advances to the next region inline (no lock
+ * needed -- the region chain is private to this ractor's cache) to preserve long
+ * fast runs across a fragmented page. */
 static inline VALUE
-ractor_cache_allocate_slot(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache,
+ractor_cache_allocate_slot(rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache,
                            size_t heap_idx)
 {
-    rb_ractor_newobj_heap_cache_t *heap_cache = &cache->heap_caches[heap_idx];
+    struct gc_bump_pointer_heap *bump = &gc_cache->bump_heaps[heap_idx];
 
-    uintptr_t cursor = heap_cache->cursor;
-    if (RB_UNLIKELY(cursor >= heap_cache->cursor_end)) {
-        if (!ractor_cache_advance_region(heap_cache)) {
-            return Qfalse;
-        }
-        cursor = heap_cache->cursor;
-    }
-
-    if (RB_UNLIKELY(is_incremental_marking(objspace))) {
-        // Not allowed to allocate without running an incremental marking step
-        if (cache->incremental_mark_step_allocated_slots >= INCREMENTAL_MARK_STEP_ALLOCATIONS) {
+    uintptr_t cursor = bump->cursor;
+    if (RB_UNLIKELY(cursor + bump->slot_size > bump->cursor_end)) {
+        if (RB_UNLIKELY(is_incremental_marking(objspace))) {
             return Qfalse;
         }
 
-        cache->incremental_mark_step_allocated_slots++;
+        rb_ractor_newobj_heap_cache_t *heap_cache = &gc_cache_private(gc_cache)->heap_caches[heap_idx];
+        if (!ractor_cache_advance_region(objspace, bump, heap_cache, &heaps[heap_idx])) {
+            return Qfalse;
+        }
+        cursor = bump->cursor;
     }
 
     VALUE obj = (VALUE)cursor;
     rb_asan_unpoison_object(obj, true);
-    heap_cache->cursor = cursor + pool_slot_sizes[heap_idx];
-
-    heap_cache->allocated_objects_count++;
-    rb_heap_t *heap = &heaps[heap_idx];
-    if (heap_cache->allocated_objects_count >= ALLOCATED_COUNT_STEP) {
-        RUBY_ATOMIC_SIZE_ADD(heap->total_allocated_objects, heap_cache->allocated_objects_count);
-        heap_cache->allocated_objects_count = 0;
-    }
+    bump->cursor = cursor + bump->slot_size;
 
 #if RGENGC_CHECK_MODE
     GC_ASSERT(rb_gc_impl_obj_slot_size(obj) == heap_slot_size(heap_idx));
@@ -2517,14 +2602,15 @@ heap_next_free_page(rb_objspace_t *objspace, rb_heap_t *heap)
 }
 
 static inline void
-ractor_cache_set_page(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx,
+ractor_cache_set_page(rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx,
                       struct heap_page *page)
 {
     gc_report(3, objspace, "ractor_set_cache: Using page %p\n", (void *)page->body);
 
-    rb_ractor_newobj_heap_cache_t *heap_cache = &cache->heap_caches[heap_idx];
+    struct gc_bump_pointer_heap *bump = &gc_cache->bump_heaps[heap_idx];
+    rb_ractor_newobj_heap_cache_t *heap_cache = &gc_cache_private(gc_cache)->heap_caches[heap_idx];
 
-    GC_ASSERT(heap_cache->cursor >= heap_cache->cursor_end);
+    GC_ASSERT(bump->cursor + bump->slot_size > bump->cursor_end);
     GC_ASSERT(heap_cache->next_region == NULL);
     GC_ASSERT(page->free_slots != 0);
     GC_ASSERT(page->free_region != NULL);
@@ -2534,10 +2620,13 @@ ractor_cache_set_page(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, 
     struct free_region *region = page->free_region;
     rb_asan_unpoison_object((VALUE)region, false);
     GC_ASSERT(RB_TYPE_P((VALUE)region, T_NONE));
-    heap_cache->cursor = (uintptr_t)region;
-    heap_cache->cursor_end = region->end;
+    bump->cursor = (uintptr_t)region;
+    bump->region_start = (uintptr_t)region;
+    heap_cache->region_end = region->end;
     heap_cache->next_region = region->next;
     rb_asan_poison_object((VALUE)region);
+
+    ractor_cache_open_window(objspace, bump, heap_cache);
 
     page->free_slots = 0;
     page->free_region = NULL;
@@ -2590,11 +2679,46 @@ rb_gc_impl_heap_sizes(void *objspace_ptr)
     return heap_sizes;
 }
 
-NOINLINE(static VALUE newobj_cache_miss(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx, bool vm_locked));
+const size_t *
+rb_gc_impl_zjit_bump_slot_sizes(void *objspace_ptr)
+{
+#if RGENGC_CHECK_MODE > 0 || RACTOR_CHECK_MODE || defined(RUBY_ASAN_ENABLED) || defined(RUBY_MSAN_ENABLED)
+    /* The interpreter fast path does extra per-allocation work the JIT cannot
+     * replicate in these builds (sanitizer poisoning, slot zero/fill and asserts
+     * under RGENGC_CHECK_MODE, the object->ractor map under RACTOR_CHECK_MODE), so
+     * tell the JIT not to inline by publishing no strides. */
+    return NULL;
+#else
+    /* The bump strides (slot_size per heap, matching the layout written into each
+     * ractor's bump_heaps) followed by a 0 terminator. These are GC-global, so the
+     * JIT may bake them at compile time. */
+    static size_t slot_sizes[HEAP_COUNT + 1] = { 0 };
+
+    if (slot_sizes[0] == 0) {
+        for (unsigned char i = 0; i < HEAP_COUNT; i++) {
+            slot_sizes[i] = pool_slot_sizes[i];
+        }
+    }
+
+    return slot_sizes;
+#endif
+}
+
+/* The single slow-path choke point for bump-pointer allocation. Reached when
+ * the shared cursor's window is exhausted -- whether because the region/page ran
+ * out, because incremental marking capped the window, or because the cursor was
+ * deliberately exhausted on entering marking or stress (so both the interpreter
+ * and the inlined JIT path funnel through here in those states). Refills the
+ * cursor and returns a raw, uninitialized T_NONE cell; the caller writes the
+ * object header. */
+NOINLINE(static VALUE newobj_bump_pointer_miss(rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx, bool vm_locked));
 
 static VALUE
-newobj_cache_miss(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx, bool vm_locked)
+newobj_bump_pointer_miss(rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx, bool vm_locked)
 {
+    struct gc_bump_pointer_heap *bump = &gc_cache->bump_heaps[heap_idx];
+    rb_ractor_newobj_cache_t *cache = gc_cache_private(gc_cache);
+    rb_ractor_newobj_heap_cache_t *heap_cache = &cache->heap_caches[heap_idx];
     rb_heap_t *heap = &heaps[heap_idx];
     VALUE obj = Qfalse;
 
@@ -2606,56 +2730,6 @@ newobj_cache_miss(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size
         unlock_vm = true;
     }
 
-    {
-        if (is_incremental_marking(objspace)) {
-            gc_continue(objspace, heap);
-            cache->incremental_mark_step_allocated_slots = 0;
-
-            // Retry allocation after resetting incremental_mark_step_allocated_slots
-            obj = ractor_cache_allocate_slot(objspace, cache, heap_idx);
-        }
-
-        if (obj == Qfalse) {
-            // Get next free page (possibly running GC)
-            struct heap_page *page = heap_next_free_page(objspace, heap);
-            ractor_cache_set_page(objspace, cache, heap_idx, page);
-
-            // Retry allocation after moving to new page
-            obj = ractor_cache_allocate_slot(objspace, cache, heap_idx);
-        }
-    }
-
-    if (unlock_vm) {
-        RB_GC_CR_UNLOCK(lev);
-    }
-
-    if (RB_UNLIKELY(obj == Qfalse)) {
-        rb_memerror();
-    }
-    return obj;
-}
-
-static VALUE
-newobj_alloc(rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx, bool vm_locked)
-{
-    VALUE obj = ractor_cache_allocate_slot(objspace, cache, heap_idx);
-
-    if (RB_UNLIKELY(obj == Qfalse)) {
-        obj = newobj_cache_miss(objspace, cache, heap_idx, vm_locked);
-    }
-
-    return obj;
-}
-
-ALWAYS_INLINE(static VALUE newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, int wb_protected, size_t heap_idx));
-
-static inline VALUE
-newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, int wb_protected, size_t heap_idx)
-{
-    VALUE obj;
-    unsigned int lev;
-
-    lev = RB_GC_CR_LOCK();
     {
         if (RB_UNLIKELY(during_gc || ruby_gc_stressful)) {
             if (during_gc) {
@@ -2674,7 +2748,105 @@ newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_new
             }
         }
 
-        obj = newobj_alloc(objspace, cache, heap_idx, true);
+        if (is_incremental_marking(objspace)) {
+            // Account for the slots consumed in the just-finished window toward
+            // the current mark step, running a step once we have allocated
+            // INCREMENTAL_MARK_STEP_ALLOCATIONS slots since the last one.
+            if (bump->slot_size > 0) {
+                cache->incremental_mark_step_allocated_slots +=
+                    (bump->cursor - bump->region_start) / bump->slot_size;
+            }
+            gc_bump_flush_alloc_count(bump, heap);
+
+            if (cache->incremental_mark_step_allocated_slots >= INCREMENTAL_MARK_STEP_ALLOCATIONS) {
+                gc_continue(objspace, heap);
+                cache->incremental_mark_step_allocated_slots = 0;
+            }
+
+            // If the current region still has slots beyond the exhausted window,
+            // open the next window in place. (gc_continue may have started
+            // sweeping and cleared the cache, in which case region_end is 0 and
+            // we fall through to acquiring a region/page below.)
+            if (bump->cursor + bump->slot_size <= heap_cache->region_end) {
+                ractor_cache_open_window(objspace, bump, heap_cache);
+                obj = ractor_cache_allocate_slot(objspace, gc_cache, heap_idx);
+            }
+        }
+
+        if (obj == Qfalse) {
+            // Move to the next free region of the current page, if any.
+            if (ractor_cache_advance_region(objspace, bump, heap_cache, heap)) {
+                obj = ractor_cache_allocate_slot(objspace, gc_cache, heap_idx);
+            }
+        }
+
+        if (obj == Qfalse) {
+            // Get next free page (possibly running GC).
+            struct heap_page *page = heap_next_free_page(objspace, heap);
+            ractor_cache_set_page(objspace, gc_cache, heap_idx, page);
+
+            obj = ractor_cache_allocate_slot(objspace, gc_cache, heap_idx);
+        }
+
+        // Under GC.stress, exhaust both cursor ends so the next allocation (from
+        // the interpreter or the JIT) re-enters this path and triggers another
+        // GC. (NEWOBJ tracing only needs the JIT diverted, which ractor_cache_open_window
+        // handles by exhausting jit_cursor_end alone -- leaving the interpreter
+        // window, and thus its GC scheduling, undisturbed.)
+        if (RB_UNLIKELY(ruby_gc_stressful)) {
+            bump->cursor_end = bump->cursor;
+            bump->jit_cursor_end = bump->cursor;
+        }
+    }
+
+    if (unlock_vm) {
+        RB_GC_CR_UNLOCK(lev);
+    }
+
+    if (RB_UNLIKELY(obj == Qfalse)) {
+        rb_memerror();
+    }
+    return obj;
+}
+
+static VALUE
+newobj_alloc(rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx, bool vm_locked)
+{
+    VALUE obj = ractor_cache_allocate_slot(objspace, gc_cache, heap_idx);
+
+    if (RB_UNLIKELY(obj == Qfalse)) {
+        obj = newobj_bump_pointer_miss(objspace, gc_cache, heap_idx, vm_locked);
+    }
+
+    return obj;
+}
+
+VALUE
+rb_gc_impl_new_obj_bump_pointer_miss(void *objspace_ptr, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx)
+{
+    // The JIT's inlined fast path missed against jit_cursor_end. That can happen
+    // for a genuine exhaustion (the shared window is also full) or, while NEWOBJ
+    // tracing is enabled, simply because jit_cursor_end is held empty while the
+    // interpreter window still has room. Route through the normal allocation
+    // entry so the latter case allocates straight from the shared cursor rather
+    // than needlessly abandoning the region.
+    return newobj_alloc((rb_objspace_t *)objspace_ptr, gc_cache, heap_idx, false);
+}
+
+ALWAYS_INLINE(static VALUE newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, int wb_protected, size_t heap_idx));
+
+static inline VALUE
+newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, int wb_protected, size_t heap_idx)
+{
+    VALUE obj;
+    unsigned int lev;
+
+    lev = RB_GC_CR_LOCK();
+    {
+        // during_gc and GC.stress are handled by the miss choke point: in both
+        // states the cursor is kept exhausted, so allocate_slot fails and routes
+        // here through newobj_alloc.
+        obj = newobj_alloc(objspace, gc_cache, heap_idx, true);
         newobj_init(klass, flags, wb_protected, objspace, obj);
     }
     RB_GC_CR_UNLOCK(lev);
@@ -2683,20 +2855,20 @@ newobj_slowpath(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_new
 }
 
 NOINLINE(static VALUE newobj_slowpath_wb_protected(VALUE klass, VALUE flags,
-                                                   rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx));
+                                                   rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx));
 NOINLINE(static VALUE newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags,
-                                                     rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx));
+                                                     rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx));
 
 static VALUE
-newobj_slowpath_wb_protected(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx)
+newobj_slowpath_wb_protected(VALUE klass, VALUE flags, rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx)
 {
-    return newobj_slowpath(klass, flags, objspace, cache, TRUE, heap_idx);
+    return newobj_slowpath(klass, flags, objspace, gc_cache, TRUE, heap_idx);
 }
 
 static VALUE
-newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, rb_objspace_t *objspace, rb_ractor_newobj_cache_t *cache, size_t heap_idx)
+newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, rb_objspace_t *objspace, struct rb_ractor_gc_cache *gc_cache, size_t heap_idx)
 {
-    return newobj_slowpath(klass, flags, objspace, cache, FALSE, heap_idx);
+    return newobj_slowpath(klass, flags, objspace, gc_cache, FALSE, heap_idx);
 }
 
 VALUE
@@ -2716,19 +2888,19 @@ rb_gc_impl_new_obj(void *objspace_ptr, void *cache_ptr, VALUE klass, VALUE flags
 
     size_t heap_idx = heap_idx_for_size(alloc_size);
 
-    rb_ractor_newobj_cache_t *cache = (rb_ractor_newobj_cache_t *)cache_ptr;
+    struct rb_ractor_gc_cache *gc_cache = (struct rb_ractor_gc_cache *)cache_ptr;
 
     if (!RB_UNLIKELY(during_gc || ruby_gc_stressful) &&
             wb_protected) {
-        obj = newobj_alloc(objspace, cache, heap_idx, false);
+        obj = newobj_alloc(objspace, gc_cache, heap_idx, false);
         newobj_init(klass, flags, wb_protected, objspace, obj);
     }
     else {
         RB_DEBUG_COUNTER_INC(obj_newobj_slowpath);
 
         obj = wb_protected ?
-          newobj_slowpath_wb_protected(klass, flags, objspace, cache, heap_idx) :
-          newobj_slowpath_wb_unprotected(klass, flags, objspace, cache, heap_idx);
+          newobj_slowpath_wb_protected(klass, flags, objspace, gc_cache, heap_idx) :
+          newobj_slowpath_wb_unprotected(klass, flags, objspace, gc_cache, heap_idx);
     }
 
     return obj;
@@ -3950,16 +4122,19 @@ gc_mode_transition(rb_objspace_t *objspace, enum gc_mode mode)
 }
 
 static void
-heap_page_flush_cache_regions(struct heap_page *page, rb_ractor_newobj_heap_cache_t *heap_cache)
+heap_page_flush_cache_regions(struct heap_page *page, struct gc_bump_pointer_heap *bump,
+                              rb_ractor_newobj_heap_cache_t *heap_cache)
 {
     struct free_region *chain = heap_cache->next_region;
 
-    if (heap_cache->cursor < heap_cache->cursor_end) {
-        VALUE start = (VALUE)heap_cache->cursor;
+    /* Return the unallocated tail of the current region to the page. cursor_end
+     * may be a smaller incremental-marking window, so use the real region end. */
+    if (bump->cursor < heap_cache->region_end) {
+        VALUE start = (VALUE)bump->cursor;
         rb_asan_unpoison_object(start, false);
         struct free_region *remnant = (struct free_region *)start;
         remnant->flags = 0;
-        remnant->end = heap_cache->cursor_end;
+        remnant->end = heap_cache->region_end;
         remnant->next = chain;
         rb_asan_poison_object(start);
         chain = remnant;
@@ -4016,30 +4191,50 @@ static int compare_pinned_slots(const void *left, const void *right, void *d);
 static void
 gc_ractor_newobj_cache_clear(void *c, void *data)
 {
-    rb_objspace_t *objspace = rb_gc_get_objspace();
-    rb_ractor_newobj_cache_t *newobj_cache = c;
+    rb_objspace_t *objspace = data;
+    struct rb_ractor_gc_cache *gc_cache = c;
+    rb_ractor_newobj_cache_t *newobj_cache = gc_cache_private(gc_cache);
 
     newobj_cache->incremental_mark_step_allocated_slots = 0;
 
     for (size_t heap_idx = 0; heap_idx < HEAP_COUNT; heap_idx++) {
-
+        struct gc_bump_pointer_heap *bump = &gc_cache->bump_heaps[heap_idx];
         rb_ractor_newobj_heap_cache_t *cache = &newobj_cache->heap_caches[heap_idx];
 
         rb_heap_t *heap = &heaps[heap_idx];
-        RUBY_ATOMIC_SIZE_ADD(heap->total_allocated_objects, cache->allocated_objects_count);
-        cache->allocated_objects_count = 0;
+        gc_bump_flush_alloc_count(bump, heap);
 
         struct heap_page *page = cache->using_page;
-        RUBY_DEBUG_LOG("ractor using_page:%p cursor:%p", (void *)page, (void *)cache->cursor);
+        RUBY_DEBUG_LOG("ractor using_page:%p cursor:%p", (void *)page, (void *)bump->cursor);
 
         if (page) {
-            heap_page_flush_cache_regions(page, cache);
+            heap_page_flush_cache_regions(page, bump, cache);
         }
 
         cache->using_page = NULL;
-        cache->cursor = 0;
-        cache->cursor_end = 0;
         cache->next_region = NULL;
+        cache->region_end = 0;
+        bump->cursor = 0;
+        bump->cursor_end = 0;
+        bump->jit_cursor_end = 0;
+        bump->region_start = 0;
+    }
+}
+
+/* Exhaust every bump cursor (without abandoning the underlying region, which the
+ * next miss resumes from) so the very next allocation -- from the interpreter or
+ * the inlined JIT path -- re-enters the miss choke point. Used when entering
+ * incremental marking and when enabling GC.stress, where every allocation must
+ * be observed by the GC. */
+static void
+gc_ractor_newobj_cache_exhaust(void *c, void *data)
+{
+    struct rb_ractor_gc_cache *gc_cache = c;
+
+    for (size_t heap_idx = 0; heap_idx < HEAP_COUNT; heap_idx++) {
+        struct gc_bump_pointer_heap *bump = &gc_cache->bump_heaps[heap_idx];
+        bump->cursor_end = bump->cursor;
+        bump->jit_cursor_end = bump->cursor;
     }
 }
 
@@ -4130,7 +4325,7 @@ gc_sweep_start(rb_objspace_t *objspace)
         }
     }
 
-    rb_gc_ractor_newobj_cache_foreach(gc_ractor_newobj_cache_clear, NULL);
+    rb_gc_ractor_newobj_cache_foreach(gc_ractor_newobj_cache_clear, objspace);
 }
 
 static void
@@ -6141,6 +6336,15 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 
     mark_roots(objspace, NULL);
 
+    if (is_incremental_marking(objspace)) {
+        /* Exhaust every ractor's bump-pointer cursors so that the next
+         * allocation (from the interpreter or from JIT-inlined code, which
+         * share the cursor) misses and routes through
+         * newobj_bump_pointer_miss, which re-imposes the per-step incremental
+         * marking throttle. */
+        rb_gc_ractor_newobj_cache_foreach(gc_ractor_newobj_cache_exhaust, NULL);
+    }
+
     gc_report(1, objspace, "gc_marks_start: (%s) end, stack in %"PRIdSIZE"\n",
               full_mark ? "full" : "minor", mark_stack_size(&objspace->mark_stack));
 }
@@ -6591,24 +6795,37 @@ rb_gc_impl_object_metadata(void *objspace_ptr, VALUE obj)
     return object_metadata_entries;
 }
 
-void *
-rb_gc_impl_ractor_cache_alloc(void *objspace_ptr, void *ractor)
+struct rb_ractor_gc_cache *
+rb_gc_impl_ractor_gc_cache_init(void *objspace_ptr, void *ractor)
 {
     rb_objspace_t *objspace = objspace_ptr;
 
     objspace->live_ractor_cache_count++;
 
-    return calloc1(sizeof(rb_ractor_newobj_cache_t));
+    /* One bump heap per size class, in ascending slot_size order, plus a
+     * trailing sentinel entry (slot_size == 0) marking the end of the array. */
+    struct rb_ractor_gc_cache *gc_cache =
+        calloc1(sizeof(struct rb_ractor_gc_cache) +
+                sizeof(struct gc_bump_pointer_heap) * (HEAP_COUNT + 1));
+    gc_cache->gc_private = calloc1(sizeof(rb_ractor_newobj_cache_t));
+
+    for (size_t i = 0; i < HEAP_COUNT; i++) {
+        gc_cache->bump_heaps[i].slot_size = pool_slot_sizes[i];
+    }
+    /* The sentinel's slot_size is already 0 thanks to calloc. */
+
+    return gc_cache;
 }
 
 void
-rb_gc_impl_ractor_cache_free(void *objspace_ptr, void *cache)
+rb_gc_impl_ractor_gc_cache_free(void *objspace_ptr, struct rb_ractor_gc_cache *gc_cache)
 {
     rb_objspace_t *objspace = objspace_ptr;
 
     objspace->live_ractor_cache_count--;
-    gc_ractor_newobj_cache_clear(cache, NULL);
-    free(cache);
+    gc_ractor_newobj_cache_clear(gc_cache, objspace);
+    free(gc_cache->gc_private);
+    free(gc_cache);
 }
 
 static void
@@ -7092,6 +7309,13 @@ gc_sweeping_enter(rb_objspace_t *objspace)
     if (MEASURE_GC) {
         gc_clock_start(&objspace->profile.sweeping_start_time);
     }
+
+    /* Lazy sweeping may be continued (via gc_continue) by a different ractor
+     * than the one that started the GC, so refresh the context's EC to the
+     * current one. Otherwise object-space event hooks fired during the sweep
+     * (e.g. RUBY_INTERNAL_EVENT_FREEOBJ) would run against a stale EC, whose
+     * trace_arg is unset, and raise. Mirrors gc_marking_enter. */
+    rb_gc_initialize_vm_context(&objspace->vm_context);
 }
 
 static void
@@ -8171,6 +8395,14 @@ rb_gc_impl_stress_set(void *objspace_ptr, VALUE flag)
 
     objspace->flags.gc_stressful = RTEST(flag);
     objspace->gc_stress_mode = flag;
+
+    if (objspace->flags.gc_stressful) {
+        /* Exhaust every ractor's bump-pointer cursors so the next allocation
+         * (interpreter or JIT-inlined) misses and routes through
+         * newobj_bump_pointer_miss, which runs a GC for each allocation while
+         * stress is enabled. */
+        rb_gc_ractor_newobj_cache_foreach(gc_ractor_newobj_cache_exhaust, NULL);
+    }
 }
 
 static int
@@ -9814,7 +10046,7 @@ rb_gc_impl_after_fork(void *objspace_ptr, rb_pid_t pid)
     objspace->fork_vm_lock_lev = 0;
 
     if (pid == 0) { /* child process */
-        rb_gc_ractor_newobj_cache_foreach(gc_ractor_newobj_cache_clear, NULL);
+        rb_gc_ractor_newobj_cache_foreach(gc_ractor_newobj_cache_clear, objspace);
     }
 }
 

@@ -338,6 +338,29 @@ pub const RARRAY_EMBED_LEN_MASK: ruby_rarray_flags = 4161536;
 pub type ruby_rarray_flags = u32;
 pub const RARRAY_EMBED_LEN_SHIFT: ruby_rarray_consts = 15;
 pub type ruby_rarray_consts = u32;
+#[repr(C)]
+pub struct RArray {
+    pub basic: RBasic,
+    pub as_: RArray__bindgen_ty_1,
+}
+#[repr(C)]
+pub struct RArray__bindgen_ty_1 {
+    pub heap: __BindgenUnionField<RArray__bindgen_ty_1__bindgen_ty_1>,
+    pub ary: __BindgenUnionField<[VALUE; 1usize]>,
+    pub bindgen_union_field: [u64; 3usize],
+}
+#[repr(C)]
+pub struct RArray__bindgen_ty_1__bindgen_ty_1 {
+    pub len: ::std::os::raw::c_long,
+    pub aux: RArray__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1,
+    pub ptr: *const VALUE,
+}
+#[repr(C)]
+pub struct RArray__bindgen_ty_1__bindgen_ty_1__bindgen_ty_1 {
+    pub capa: __BindgenUnionField<::std::os::raw::c_long>,
+    pub shared_root: __BindgenUnionField<VALUE>,
+    pub bindgen_union_field: u64,
+}
 pub const RMODULE_IS_REFINEMENT: ruby_rmodule_flags = 8192;
 pub type ruby_rmodule_flags = u32;
 pub const ROBJECT_HEAP: ruby_robject_flags = 65536;
@@ -1928,6 +1951,8 @@ pub struct zjit_jit_frame {
     pub materialize_block_code: bool,
 }
 pub const ISEQ_BODY_OFFSET_PARAM: zjit_struct_offsets = 16;
+pub const RUBY_OFFSET_THREAD_RACTOR: zjit_struct_offsets = 24;
+pub const RUBY_OFFSET_RACTOR_GC_CACHE: zjit_struct_offsets = 552;
 pub type zjit_struct_offsets = u32;
 pub const ROBJECT_OFFSET_AS_HEAP_FIELDS: jit_bindgen_constants = 16;
 pub const ROBJECT_OFFSET_AS_ARY: jit_bindgen_constants = 16;
@@ -1944,6 +1969,21 @@ pub type jit_bindgen_constants = u32;
 pub const rb_invalid_shape_id: shape_id_t = 524287;
 pub type rb_iseq_param_keyword_struct =
     rb_iseq_constant_body_rb_iseq_parameters_rb_iseq_param_keyword;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct gc_bump_pointer_heap {
+    pub cursor: usize,
+    pub cursor_end: usize,
+    pub jit_cursor_end: usize,
+    pub region_start: usize,
+    pub slot_size: usize,
+}
+#[repr(C)]
+#[derive(Debug)]
+pub struct rb_ractor_gc_cache {
+    pub gc_private: *mut ::std::os::raw::c_void,
+    pub bump_heaps: __IncompleteArrayField<gc_bump_pointer_heap>,
+}
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct succ_index_table {
