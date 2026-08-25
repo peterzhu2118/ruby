@@ -80,6 +80,7 @@ rb_call_inits(void)
     CALL(Prism);
     CALL(unicode_version);
     CALL(Set);
+    CALL(id_table_bench);
 
     // enable builtin loading
     CALL(builtin);

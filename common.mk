@@ -156,6 +156,7 @@ COMMONOBJS    = \
 		file.$(OBJEXT) \
 		gc.$(OBJEXT) \
 		hash.$(OBJEXT) \
+		id_table_bench.$(OBJEXT) \
 		imemo.$(OBJEXT) \
 		inits.$(OBJEXT) \
 		io.$(OBJEXT) \
