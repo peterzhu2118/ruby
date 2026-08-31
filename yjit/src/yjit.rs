@@ -17,6 +17,15 @@ use crate::log::Log;
 #[no_mangle]
 pub static mut rb_yjit_enabled_p: bool = false;
 
+/// Whether YJIT is compiling. Starts as false until YJIT is enabled, so the
+/// interpreter doesn't need to check rb_yjit_enabled_p before it. Set back to
+/// false when we run out of executable memory, in which case the interpreter
+/// stops incrementing ISEQ call counters so that ISEQs that will never be
+/// compiled stop dirtying CoW pages after fork.
+#[allow(non_upper_case_globals)]
+#[no_mangle]
+pub static mut rb_yjit_compiling_p: bool = false;
+
 // Time when YJIT was yjit was initialized (see yjit_init)
 pub static mut YJIT_INIT_TIME: Option<Instant> = None;
 
@@ -35,6 +44,22 @@ pub extern "C" fn rb_yjit_option_disable() -> bool {
 /// Like rb_yjit_enabled_p, but for Rust code.
 pub fn yjit_enabled_p() -> bool {
     unsafe { rb_yjit_enabled_p }
+}
+
+/// Whether we have run out of executable memory. Used by the C code to
+/// decide whether to keep incrementing ISEQ call counters.
+pub fn out_of_memory_p() -> bool {
+    let cb = CodegenGlobals::get_inline_cb();
+    let ocb = CodegenGlobals::get_outlined_cb();
+    cb.has_dropped_bytes() || ocb.unwrap().has_dropped_bytes()
+}
+
+/// Register specialized codegen for builtin C method entries.
+/// Must be called at boot before ruby_init_prelude() since the prelude
+/// could redefine core methods (e.g. Kernel.prepend via bundler).
+#[no_mangle]
+pub extern "C" fn rb_yjit_init_builtin_cmes() {
+    yjit_reg_method_codegen_fns();
 }
 
 /// This function is called from C code
@@ -72,7 +97,10 @@ fn yjit_init() {
 
         // YJIT enabled and initialized successfully
         assert!(unsafe{ !rb_yjit_enabled_p });
-        unsafe { rb_yjit_enabled_p = true; }
+        unsafe {
+            rb_yjit_enabled_p = true;
+            rb_yjit_compiling_p = true;
+        }
     });
 
     if let Err(_) = result {
@@ -174,10 +202,11 @@ pub extern "C" fn rb_yjit_iseq_gen_entry_point(iseq: IseqPtr, ec: EcPtr, jit_exc
 
     let maybe_code_ptr = with_compile_time(|| { gen_entry_point(iseq, ec, jit_exception) });
 
-    match maybe_code_ptr {
-        Some(ptr) => ptr,
-        None => std::ptr::null(),
-    }
+    // Stop compiling if we ran out of executable memory so that the
+    // interpreter stops incrementing ISEQ call counters.
+    unsafe { rb_yjit_compiling_p = !out_of_memory_p(); }
+
+    maybe_code_ptr.unwrap_or(std::ptr::null())
 }
 
 /// Free and recompile all existing JIT code
