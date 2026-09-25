@@ -6759,6 +6759,7 @@ parse_subexp(Node** top, OnigToken* tok, int term,
       }
       r = parse_branch(&node, tok, term, src, end, env);
       if (r < 0) {
+        onig_node_free(node);
         onig_node_free(topnode);
         return r;
       }
