@@ -531,9 +531,10 @@ struct rb_iseq_constant_body {
             struct succ_index_table *succ_index_table;
 #endif
         } positions_or_succ_index_table;
+        const uint8_t *line_nos;
         unsigned int size;
+        unsigned int line_nos_size;
 #ifdef USE_ISEQ_NODE_ID
-        const uint8_t *node_ids;
         unsigned int node_ids_size;
 #endif
     } insns_info;

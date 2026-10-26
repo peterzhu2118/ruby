@@ -294,7 +294,23 @@ VALUE rb_iseq_parameters(const rb_iseq_t *iseq, int is_proc);
 unsigned int rb_iseq_line_no(const rb_iseq_t *iseq, size_t pos);
 #ifdef USE_ISEQ_NODE_ID
 int rb_iseq_node_id(const rb_iseq_t *iseq, size_t pos);
+
+static inline const uint8_t *
+iseq_insns_info_node_ids(const struct rb_iseq_constant_body *body)
+{
+    return body->insns_info.line_nos + body->insns_info.line_nos_size;
+}
 #endif
+
+static inline size_t
+iseq_insns_info_streams_size(const struct rb_iseq_constant_body *body)
+{
+    size_t size = body->insns_info.line_nos_size;
+#ifdef USE_ISEQ_NODE_ID
+    size += body->insns_info.node_ids_size;
+#endif
+    return size;
+}
 void rb_iseq_trace_set(const rb_iseq_t *iseq, rb_event_flag_t turnon_events);
 void rb_iseq_trace_set_all(rb_event_flag_t turnon_events);
 void rb_iseq_insns_info_encode_positions(const rb_iseq_t *iseq);
@@ -332,7 +348,6 @@ struct rb_compile_option_struct {
 };
 
 struct iseq_insn_info_entry {
-    int line_no;
     rb_event_flag_t events;
 };
 

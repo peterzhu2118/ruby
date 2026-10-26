@@ -2051,7 +2051,6 @@ pub struct iseq_compile_data__bindgen_ty_3 {
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct iseq_insn_info_entry {
-    pub line_no: ::std::os::raw::c_int,
     pub events: rb_event_flag_t,
 }
 pub const CATCH_TYPE_RESCUE: rb_catch_type = 3;

@@ -204,9 +204,7 @@ rb_iseq_free(const rb_iseq_t *iseq)
 #endif
         SIZED_FREE_N(body->iseq_encoded, body->iseq_size);
         SIZED_FREE_N(body->insns_info.body, body->insns_info.size);
-#ifdef USE_ISEQ_NODE_ID
-        SIZED_FREE_N(body->insns_info.node_ids, body->insns_info.node_ids_size);
-#endif
+        SIZED_FREE_N(body->insns_info.line_nos, iseq_insns_info_streams_size(body));
 #if VM_INSN_INFO_TABLE_IMPL == 2
         ruby_xfree(body->insns_info.positions_or_succ_index_table.succ_index_table);
 #else
@@ -596,9 +594,7 @@ rb_iseq_memsize(const rb_iseq_t *iseq)
         if (body->variable) size += sizeof(struct rb_iseq_variable);
         size += body->iseq_size * sizeof(VALUE);
         size += body->insns_info.size * (sizeof(struct iseq_insn_info_entry) + sizeof(unsigned int));
-#ifdef USE_ISEQ_NODE_ID
-        size += body->insns_info.node_ids_size;
-#endif
+        size += iseq_insns_info_streams_size(body);
         size += body->local_table_size * sizeof(ID); // body->local_table
         if (!ISEQ_LVAR_STATES_EMBED_P(body->local_table_size) && body->lvar_states.list) {
             size += ISEQ_LVAR_STATES_BUFLEN(body->local_table_size) * sizeof(uint8_t);
@@ -2419,8 +2415,8 @@ get_insn_info_binary_search(const rb_iseq_t *iseq, size_t pos)
 
     if (debug) {
         printf("size: %"PRIuSIZE"\n", size);
-        printf("insns_info[%"PRIuSIZE"]: position: %d, line: %d, pos: %"PRIuSIZE"\n",
-               (size_t)0, positions[0], insns_info[0].line_no, pos);
+        printf("insns_info[%"PRIuSIZE"]: position: %d, pos: %"PRIuSIZE"\n",
+               (size_t)0, positions[0], pos);
     }
 
     if (size == 0) {
@@ -2471,8 +2467,7 @@ get_insn_info_succinct_bitvector(const rb_iseq_t *iseq, size_t pos)
 
     if (debug) {
         printf("size: %"PRIuSIZE"\n", size);
-        printf("insns_info[%"PRIuSIZE"]: line: %d, pos: %"PRIuSIZE"\n",
-               (size_t)0, insns_info[0].line_no, pos);
+        printf("insns_info[%"PRIuSIZE"]: pos: %"PRIuSIZE"\n", (size_t)0, pos);
     }
 
     if (size == 0) {
@@ -2507,8 +2502,8 @@ get_insn_info_linear_search(const rb_iseq_t *iseq, const unsigned int *positions
 
     if (debug) {
         printf("size: %"PRIuSIZE"\n", size);
-        printf("insns_info[%"PRIuSIZE"]: position: %d, line: %d, pos: %"PRIuSIZE"\n",
-               i, positions[i], insns_info[i].line_no, pos);
+        printf("insns_info[%"PRIuSIZE"]: position: %d, pos: %"PRIuSIZE"\n",
+               i, positions[i], pos);
     }
 
     if (size == 0) {
@@ -2519,8 +2514,8 @@ get_insn_info_linear_search(const rb_iseq_t *iseq, const unsigned int *positions
     }
     else {
         for (i=1; i<size; i++) {
-            if (debug) printf("insns_info[%"PRIuSIZE"]: position: %d, line: %d, pos: %"PRIuSIZE"\n",
-                              i, positions[i], insns_info[i].line_no, pos);
+            if (debug) printf("insns_info[%"PRIuSIZE"]: position: %d, pos: %"PRIuSIZE"\n",
+                              i, positions[i], pos);
 
             if (positions[i] == pos) {
                 return &insns_info[i];
@@ -2564,22 +2559,8 @@ validate_get_insn_info(const rb_iseq_t *iseq)
 }
 #endif
 
-unsigned int
-rb_iseq_line_no(const rb_iseq_t *iseq, size_t pos)
-{
-    const struct iseq_insn_info_entry *entry = get_insn_info(iseq, pos);
-
-    if (entry) {
-        return entry->line_no;
-    }
-    else {
-        return 0;
-    }
-}
-
-#ifdef USE_ISEQ_NODE_ID
 static int
-node_id_stream_read(const uint8_t **ptr, const uint8_t *end)
+iseq_varint_stream_read(const uint8_t **ptr, const uint8_t *end)
 {
     uint32_t zz = 0;
     unsigned int shift = 0;
@@ -2593,6 +2574,36 @@ node_id_stream_read(const uint8_t **ptr, const uint8_t *end)
     return (int)(zz >> 1) ^ -(int)(zz & 1);
 }
 
+static int
+iseq_line_no_at(const struct rb_iseq_constant_body *body, size_t index)
+{
+    const uint8_t *ptr = body->insns_info.line_nos;
+    const uint8_t *end = ptr + body->insns_info.line_nos_size;
+    int line_no = 0;
+
+    for (size_t i = 0; i <= index; i++) {
+        VM_ASSERT(ptr < end);
+        if (ptr >= end) return 0;
+        line_no += iseq_varint_stream_read(&ptr, end);
+    }
+    return line_no;
+}
+
+unsigned int
+rb_iseq_line_no(const rb_iseq_t *iseq, size_t pos)
+{
+    const struct rb_iseq_constant_body *const body = ISEQ_BODY(iseq);
+    const struct iseq_insn_info_entry *entry = get_insn_info(iseq, pos);
+
+    if (entry) {
+        return (unsigned int)iseq_line_no_at(body, (size_t)(entry - body->insns_info.body));
+    }
+    else {
+        return 0;
+    }
+}
+
+#ifdef USE_ISEQ_NODE_ID
 int
 rb_iseq_node_id(const rb_iseq_t *iseq, size_t pos)
 {
@@ -2602,14 +2613,14 @@ rb_iseq_node_id(const rb_iseq_t *iseq, size_t pos)
     }
 
     const VALUE *code = rb_iseq_original_iseq(iseq);
-    const uint8_t *ptr = body->insns_info.node_ids;
+    const uint8_t *ptr = iseq_insns_info_node_ids(body);
     const uint8_t *end = ptr + body->insns_info.node_ids_size;
     size_t code_pos = 0;
     int node_id = 0;
 
     while (ptr < end && code_pos < body->iseq_size) {
         size_t len = (size_t)insn_len(code[code_pos]);
-        node_id += node_id_stream_read(&ptr, end);
+        node_id += iseq_varint_stream_read(&ptr, end);
         if (pos < code_pos + len) {
             return node_id;
         }
@@ -3326,11 +3337,18 @@ iseqw_trace_points(VALUE self)
     const struct rb_iseq_constant_body *const body = ISEQ_BODY(iseq);
     unsigned int i;
     VALUE ary = rb_ary_new();
+    const uint8_t *line_ptr = body->insns_info.line_nos;
+    const uint8_t *line_end = line_ptr ? line_ptr + body->insns_info.line_nos_size : NULL;
+    int line_no = 0;
 
     for (i=0; i<body->insns_info.size; i++) {
+        VM_ASSERT(line_ptr && line_ptr < line_end);
+        if (line_ptr && line_ptr < line_end) {
+            line_no += iseq_varint_stream_read(&line_ptr, line_end);
+        }
         const struct iseq_insn_info_entry *entry = &body->insns_info.body[i];
         if (entry->events) {
-            push_event_info(iseq, entry->events, entry->line_no, ary);
+            push_event_info(iseq, entry->events, line_no, ary);
         }
     }
     return ary;
@@ -3799,10 +3817,15 @@ iseq_data_to_ary(const rb_iseq_t *iseq)
     prev_insn_info = NULL;
 #ifdef USE_ISEQ_NODE_ID
     VALUE node_ids = rb_ary_new();
-    const uint8_t *nid_ptr = iseq_body->insns_info.node_ids;
+    const uint8_t *nid_ptr = iseq_insns_info_node_ids(iseq_body);
     const uint8_t *nid_end = nid_ptr ? nid_ptr + iseq_body->insns_info.node_ids_size : NULL;
     int node_id = 0;
 #endif
+
+    const uint8_t *line_ptr = iseq_body->insns_info.line_nos;
+    const uint8_t *line_end = line_ptr ? line_ptr + iseq_body->insns_info.line_nos_size : NULL;
+    long line_index = -1;
+    int cur_line = 0;
 
     for (l=0, pos=0; l<RARRAY_LEN(nbody); l++) {
         const struct iseq_insn_info_entry *info;
@@ -3817,13 +3840,20 @@ iseq_data_to_ary(const rb_iseq_t *iseq)
 #ifdef USE_ISEQ_NODE_ID
         VM_ASSERT(nid_ptr && nid_ptr < nid_end);
         if (nid_ptr && nid_ptr < nid_end) {
-            node_id += node_id_stream_read(&nid_ptr, nid_end);
+            node_id += iseq_varint_stream_read(&nid_ptr, nid_end);
         }
         rb_ary_push(node_ids, INT2FIX(node_id));
 #endif
 
         if (prev_insn_info != info) {
-            int line = info->line_no;
+            long idx = (long)(info - iseq_body->insns_info.body);
+            while (line_index < idx) {
+                VM_ASSERT(line_ptr && line_ptr < line_end);
+                if (!(line_ptr && line_ptr < line_end)) { cur_line = 0; break; }
+                cur_line += iseq_varint_stream_read(&line_ptr, line_end);
+                line_index++;
+            }
+            int line = cur_line;
             rb_event_flag_t events = info->events;
 
             if (line > 0 && last_line != line) {
@@ -4200,11 +4230,23 @@ iseq_add_local_tracepoint(const rb_iseq_t *iseq, rb_event_flag_t turnon_events, 
     VM_ASSERT(ISEQ_EXECUTABLE_P(iseq));
     ASSERT_vm_locking_with_barrier();
 
+    const uint8_t *line_ptr = body->insns_info.line_nos;
+    const uint8_t *line_end = line_ptr ? line_ptr + body->insns_info.line_nos_size : NULL;
+    long line_index = -1;
+    int cur_line = 0;
+
     for (pc=0; pc<body->iseq_size;) {
         const struct iseq_insn_info_entry *entry = get_insn_info(iseq, pc);
         rb_event_flag_t pc_events = entry->events;
         rb_event_flag_t target_events = turnon_events;
-        unsigned int line = (int)entry->line_no;
+        long idx = (long)(entry - body->insns_info.body);
+        while (line_index < idx) {
+            VM_ASSERT(line_ptr && line_ptr < line_end);
+            if (!(line_ptr && line_ptr < line_end)) { cur_line = 0; break; }
+            cur_line += iseq_varint_stream_read(&line_ptr, line_end);
+            line_index++;
+        }
+        unsigned int line = (unsigned int)cur_line;
 
         if (target_line == 0 || target_line == line) {
             /* ok */

@@ -2624,29 +2624,40 @@ fix_sp_depth(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
     return stack_max;
 }
 
-#ifdef USE_ISEQ_NODE_ID
 static void
-add_node_id(uint8_t *node_ids, unsigned int *node_ids_size, int node_id, int *prev_node_id)
+add_varint_delta(uint8_t *stream, unsigned int *stream_size, int value, int *prev_value)
 {
-    int delta = node_id - *prev_node_id;
+    int delta = value - *prev_value;
     uint32_t zz = ((uint32_t)delta << 1) ^ (uint32_t)(delta >> 31);
-    *prev_node_id = node_id;
+    *prev_value = value;
     do {
         uint8_t byte = zz & 0x7f;
         zz >>= 7;
-        node_ids[(*node_ids_size)++] = zz ? (byte | 0x80) : byte;
+        stream[(*stream_size)++] = zz ? (byte | 0x80) : byte;
     } while (zz);
 }
-#endif
+
+static void
+add_varint_delta_arena(rb_iseq_t *iseq, uint8_t **stream, unsigned int *stream_capa,
+                       unsigned int *stream_size, int value, int *prev_value)
+{
+    if (*stream_size + 5 > *stream_capa) {
+        unsigned int new_capa = *stream_capa * 2;
+        uint8_t *new_stream = compile_data_alloc(iseq, new_capa, 1);
+        memcpy(new_stream, *stream, *stream_size);
+        *stream = new_stream;
+        *stream_capa = new_capa;
+    }
+    add_varint_delta(*stream, stream_size, value, prev_value);
+}
 
 static int
 add_insn_info(struct iseq_insn_info_entry *insns_info, unsigned int *positions,
-              int insns_info_index, int code_index, const INSN *iobj)
+              int insns_info_index, int code_index, int prev_line_no, const INSN *iobj)
 {
     if (insns_info_index == 0 ||
-        insns_info[insns_info_index-1].line_no != iobj->insn_info.line_no ||
+        prev_line_no                         != iobj->insn_info.line_no ||
         insns_info[insns_info_index-1].events  != iobj->insn_info.events) {
-        insns_info[insns_info_index].line_no    = iobj->insn_info.line_no;
         insns_info[insns_info_index].events     = iobj->insn_info.events;
         positions[insns_info_index]             = code_index;
         return TRUE;
@@ -2658,7 +2669,6 @@ static int
 add_adjust_info(struct iseq_insn_info_entry *insns_info, unsigned int *positions,
                 int insns_info_index, int code_index, const ADJUST *adjust)
 {
-    insns_info[insns_info_index].line_no    = adjust->line_no;
     insns_info[insns_info_index].events     = 0;
     positions[insns_info_index]             = code_index;
     return TRUE;
@@ -2785,8 +2795,13 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
 
     const int positions_size = insn_num;
     positions = ALLOC_N(unsigned int, insn_num);
+    unsigned int line_nos_capa = insn_num ? (unsigned int)insn_num : 8;
+    uint8_t *line_nos = compile_data_alloc(iseq, line_nos_capa, 1);
+    unsigned int line_nos_size = 0;
+    int entry_line_no = 0;
 #ifdef USE_ISEQ_NODE_ID
-    uint8_t *node_ids = ALLOC_N(uint8_t, (size_t)insn_num * 5);
+    unsigned int node_ids_capa = insn_num ? (unsigned int)insn_num : 8;
+    uint8_t *node_ids = compile_data_alloc(iseq, node_ids_capa, 1);
     unsigned int node_ids_size = 0;
     int prev_node_id = 0;
 #endif
@@ -2966,9 +2981,12 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
                         return COMPILE_NG;
                     }
                 }
-                if (add_insn_info(insns_info, positions, insns_info_index, code_index, iobj)) insns_info_index++;
+                if (add_insn_info(insns_info, positions, insns_info_index, code_index, entry_line_no, iobj)) {
+                    insns_info_index++;
+                    add_varint_delta_arena(iseq, &line_nos, &line_nos_capa, &line_nos_size, iobj->insn_info.line_no, &entry_line_no);
+                }
 #ifdef USE_ISEQ_NODE_ID
-                add_node_id(node_ids, &node_ids_size, iobj->insn_info.node_id, &prev_node_id);
+                add_varint_delta_arena(iseq, &node_ids, &node_ids_capa, &node_ids_size, iobj->insn_info.node_id, &prev_node_id);
 #endif
                 code_index += len;
                 break;
@@ -3004,9 +3022,12 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
                             COMPILE_ERROR(iseq, adjust->line_no,
                                           "iseq_set_sequence: adjust bug (ISEQ_ELEMENT_ADJUST must not be the first in iseq)");
                         }
-                        if (add_adjust_info(insns_info, positions, insns_info_index, code_index, adjust)) insns_info_index++;
+                        if (add_adjust_info(insns_info, positions, insns_info_index, code_index, adjust)) {
+                            insns_info_index++;
+                            add_varint_delta_arena(iseq, &line_nos, &line_nos_capa, &line_nos_size, adjust->line_no, &entry_line_no);
+                        }
 #ifdef USE_ISEQ_NODE_ID
-                        add_node_id(node_ids, &node_ids_size, -1, &prev_node_id);
+                        add_varint_delta_arena(iseq, &node_ids, &node_ids_capa, &node_ids_size, -1, &prev_node_id);
 #endif
                     }
                     if (diff > 1) {
@@ -3021,9 +3042,6 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
                         SIZED_FREE_N(generated_iseq, generated_iseq_size);
                         SIZED_FREE_N(insns_info, insns_info_size);
                         SIZED_FREE_N(positions, positions_size);
-#ifdef USE_ISEQ_NODE_ID
-                        SIZED_FREE_N(node_ids, (size_t)insns_info_size * 5);
-#endif
                         if (ISEQ_MBITS_BUFLEN(code_size) > 1) {
                             SIZED_FREE_N(mark_offset_bits, ISEQ_MBITS_BUFLEN(code_index));
                         }
@@ -3064,8 +3082,18 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
     /* get rid of memory leak when REALLOC failed */
     body->insns_info.body = insns_info;
     body->insns_info.positions_or_succ_index_table.positions = positions;
+
 #ifdef USE_ISEQ_NODE_ID
-    body->insns_info.node_ids = node_ids;
+    const size_t streams_size = line_nos_size + node_ids_size;
+#else
+    const size_t streams_size = line_nos_size;
+#endif
+
+    uint8_t *streams = ALLOC_N(uint8_t, streams_size);
+    memcpy(streams, line_nos, line_nos_size);
+
+#ifdef USE_ISEQ_NODE_ID
+    memcpy(streams + line_nos_size, node_ids, node_ids_size);
 #endif
 
     SIZED_REALLOC_N(insns_info, struct iseq_insn_info_entry, insns_info_index, insns_info_size);
@@ -3073,9 +3101,9 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *const anchor)
     SIZED_REALLOC_N(positions, unsigned int, insns_info_index, positions_size);
     body->insns_info.positions_or_succ_index_table.positions = positions;
     body->insns_info.size = insns_info_index;
+    body->insns_info.line_nos = streams;
+    body->insns_info.line_nos_size = line_nos_size;
 #ifdef USE_ISEQ_NODE_ID
-    SIZED_REALLOC_N(node_ids, uint8_t, node_ids_size, (size_t)insns_info_size * 5);
-    body->insns_info.node_ids = node_ids;
     body->insns_info.node_ids_size = node_ids_size;
 #endif
 
@@ -12817,7 +12845,7 @@ typedef uint32_t ibf_offset_t;
 
 #define IBF_MAJOR_VERSION ISEQ_MAJOR_VERSION
 #ifdef RUBY_DEVEL
-#define IBF_DEVEL_VERSION 12
+#define IBF_DEVEL_VERSION 13
 #define IBF_MINOR_VERSION (ISEQ_MINOR_VERSION * 10000 + IBF_DEVEL_VERSION)
 #else
 #define IBF_MINOR_VERSION ISEQ_MINOR_VERSION
@@ -13535,19 +13563,19 @@ ibf_dump_insns_info_body(struct ibf_dump *dump, const rb_iseq_t *iseq)
     const struct rb_iseq_constant_body *body = ISEQ_BODY(iseq);
     const struct iseq_insn_info_entry *entries = body->insns_info.body;
 
+    ibf_dump_write_small_value(dump, body->insns_info.line_nos_size);
 #ifdef USE_ISEQ_NODE_ID
     ibf_dump_write_small_value(dump, body->insns_info.node_ids_size);
 #endif
     unsigned int i;
     for (i = 0; i < body->insns_info.size; i++) {
-        ibf_dump_write_small_value(dump, entries[i].line_no);
         ibf_dump_write_small_value(dump, entries[i].events);
     }
-#ifdef USE_ISEQ_NODE_ID
-    if (body->insns_info.node_ids_size > 0) {
-        ibf_dump_write(dump, body->insns_info.node_ids, body->insns_info.node_ids_size);
+    /* line numbers come first, then node ids, contiguously */
+    const size_t streams_size = iseq_insns_info_streams_size(body);
+    if (streams_size > 0) {
+        ibf_dump_write(dump, body->insns_info.line_nos, streams_size);
     }
-#endif
 
     return offset;
 }
@@ -13559,25 +13587,30 @@ ibf_load_insns_info_body(const struct ibf_load *load, ibf_offset_t body_offset, 
     ibf_offset_t reading_pos = body_offset;
     struct iseq_insn_info_entry *entries = ALLOC_N(struct iseq_insn_info_entry, size);
 
+    const unsigned int line_nos_size = (unsigned int)ibf_load_small_value(load, &reading_pos);
+    unsigned int node_ids_size = 0;
 #ifdef USE_ISEQ_NODE_ID
-    const unsigned int node_ids_size = (unsigned int)ibf_load_small_value(load, &reading_pos);
+    node_ids_size = (unsigned int)ibf_load_small_value(load, &reading_pos);
 #endif
     unsigned int i;
     for (i = 0; i < size; i++) {
-        entries[i].line_no = (int)ibf_load_small_value(load, &reading_pos);
         entries[i].events = (rb_event_flag_t)ibf_load_small_value(load, &reading_pos);
     }
-#ifdef USE_ISEQ_NODE_ID
-    if (node_ids_size > 0) {
-        if (node_ids_size > load->current_buffer->size - reading_pos) {
+
+    const size_t streams_size = (size_t)line_nos_size + node_ids_size;
+    if (streams_size > 0) {
+        if (streams_size > load->current_buffer->size - reading_pos) {
             rb_raise(rb_eRuntimeError, "invalid byte sequence");
         }
-        uint8_t *node_ids = ALLOC_N(uint8_t, node_ids_size);
-        memcpy(node_ids, load->current_buffer->buff + reading_pos, node_ids_size);
-        load_body->insns_info.node_ids = node_ids;
+
+        uint8_t *streams = ALLOC_N(uint8_t, streams_size);
+        memcpy(streams, load->current_buffer->buff + reading_pos, streams_size);
+        load_body->insns_info.line_nos = streams;
+        load_body->insns_info.line_nos_size = line_nos_size;
+#ifdef USE_ISEQ_NODE_ID
         load_body->insns_info.node_ids_size = node_ids_size;
-    }
 #endif
+    }
     load_body->insns_info.body = entries;
 }
 
